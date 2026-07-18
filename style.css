@@ -184,11 +184,11 @@ tr.detail td {
     border-bottom: 1px solid var(--line);
   }
   tr.flight-row td { display: block; padding: 0; border: 0; background: none !important; font-size: 14px; }
-  td.sched, td.airline { display: none; }
-  td.flightno { grid-column: 1; grid-row: 1; font-size: 17px; }
-  td.from { grid-column: 1; grid-row: 2; }
+  tr.flight-row td.sched, tr.flight-row td.airline { display: none; }
+  tr.flight-row td.flightno { grid-column: 1; grid-row: 1; font-size: 17px; }
+  tr.flight-row td.from { grid-column: 1; grid-row: 2; }
   td.from .city { font-size: 12px; }
-  td.eta { grid-column: 2; grid-row: 1 / span 2; text-align: right; align-self: center; }
+  tr.flight-row td.eta { grid-column: 2; grid-row: 1 / span 2; text-align: right; align-self: center; }
   td.eta.live .eta-main { font-size: 19px; }
   tr.detail { display: block; }
   tr.detail td { display: block; padding: 10px 8px 14px; }
