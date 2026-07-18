@@ -320,6 +320,19 @@ async function fetchAdsb() {
 }
 
 /* ---------------- derived per-flight view ---------------- */
+function minsUntilBoardTime(f) {
+  let diff = minutesOfDay(f.time) - torontoMinutesNow();
+  if (f.day === "Tomorrow") diff += 1440;
+  return diff;
+}
+
+function fmtDur(min) {
+  min = Math.round(min);
+  if (min <= 0) return "due now";
+  if (min < 60) return `in ${min} min`;
+  return `in ${Math.floor(min / 60)} h ${String(min % 60).padStart(2, "0")} m`;
+}
+
 function viewOf(f) {
   const st = f.status.toLowerCase();
   const ata = state.ata[ataKey(f)];
@@ -328,13 +341,13 @@ function viewOf(f) {
 
   const v = {
     schedTxt: fmt12(f.time),
-    etaTxt: fmt12(f.time), etaNote: "", etaLive: false,
+    etaMain: fmt12(f.time), etaSub: "", etaLive: false,
     ataTxt: "—", ataNote: "", ataApprox: false,
     statusTxt: f.status, statusCls: "ontime",
-    phase: null, ac: acFresh ? ac : null,
+    ac: acFresh ? ac : null,
   };
 
-  if (st === "cancelled") { v.statusCls = "cancelled"; v.etaTxt = "—"; return v; }
+  if (st === "cancelled") { v.statusCls = "cancelled"; v.etaMain = "—"; return v; }
 
   const landed = !!ata || st === "arrived";
 
@@ -355,23 +368,28 @@ function viewOf(f) {
       v.ataTxt = `≈ ${fmt12(f.time)}`;
       v.ataApprox = true; v.ataNote = "airport board";
     }
-    v.etaTxt = v.ataTxt.replace(/^≈ /, "");
+    v.etaMain = v.ataTxt.replace(/^≈ /, "");
+    v.etaSub = "landed";
     return v;
   }
 
   if (st === "delayed" || st === "late") v.statusCls = "delayed";
   else if (st === "early") v.statusCls = "early";
 
-  // Live aircraft airborne -> refine ETA and expose phase.
   if (acFresh && !ac.grounded && ac.gs > 40) {
-    const etaMin = (ac.dist / (ac.gs * 1.852)) * 60 + 4; // + approach buffer
-    v.etaTxt = fmt12FromDate(new Date(Date.now() + etaMin * 60_000));
+    // Predicted touchdown from the live position: distance over ground speed
+    // plus an approach-pattern buffer. Counts down between radar polls.
+    const etaEpoch = ac.ts + ((ac.dist / (ac.gs * 1.852)) * 60 + 4) * 60_000;
+    const remain = (etaEpoch - Date.now()) / 60_000;
+    v.etaMain = fmtDur(remain);
+    v.etaSub = `${fmt12FromDate(new Date(etaEpoch))} · live radar · ${Math.round(ac.dist)} km out`;
     v.etaLive = true;
-    v.etaNote = `live · ${Math.round(ac.dist)} km out`;
-    v.phase = ac.dist < 12 ? "FINAL" : ac.dist < 60 ? "APPROACH" : "EN ROUTE";
-    v.statusTxt = v.phase === "FINAL" ? "On final" : v.phase === "APPROACH" ? "Approaching" : "In flight";
+    v.statusTxt = ac.dist < 12 ? "On final" : ac.dist < 60 ? "Approaching" : "In flight";
     v.statusCls = "inflight";
-    v.ataNote = `expected in ~${Math.max(1, Math.round(etaMin))} min`;
+  } else {
+    // No radar contact yet: count down to the airport's current estimate.
+    const dm = minsUntilBoardTime(f);
+    v.etaSub = dm >= -2 ? fmtDur(dm) : "awaiting update";
   }
   return v;
 }
@@ -401,7 +419,7 @@ function render() {
   <td class="flightno">${esc(f.flight)}</td>
   <td class="airline"><span class="airline-tag ${f.airlineCls}">${esc(f.airline)}</span></td>
   <td class="from"><span class="code">${esc(f.code)}</span><span class="city">${esc(f.city)}</span></td>
-  <td class="eta"><span class="${v.etaLive ? "eta-live" : ""}">${v.etaTxt}</span>${v.etaNote ? `<span class="eta-note">${esc(v.etaNote)}</span>` : ""}</td>
+  <td class="eta${v.etaLive ? " live" : ""}"><span class="eta-main">${esc(v.etaMain)}</span>${v.etaSub ? `<span class="eta-note">${esc(v.etaSub)}</span>` : ""}</td>
   <td class="ata"><span class="${v.ataApprox ? "approx" : ""}">${v.ataTxt}</span>${v.ataNote ? `<span class="ata-note">${esc(v.ataNote)}</span>` : ""}</td>
   <td class="status"><span class="chip ${v.statusCls}">${esc(v.statusTxt)}</span></td>
 </tr>`;
