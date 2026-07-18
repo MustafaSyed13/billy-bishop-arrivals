@@ -12,15 +12,18 @@ const YTZ = { lat: 43.6275, lon: -79.3962 };
 const BOARD_URL = "https://www.billybishopairport.com/flights/arrivals/";
 const ADSB_URL = "https://api.airplanes.live/v2/point/43.6275/-79.3962/250";
 const BOARD_INTERVAL_MS = 60_000;
-const ADSB_INTERVAL_MS = 20_000;
+const ADSB_BASE_MS = 15_000;      // radar poll cadence, nothing close by
+const ADSB_FAST_MS = 6_000;       // radar poll cadence with an aircraft inside 80 km
 const ADSB_HIDDEN_INTERVAL_MS = 60_000;
 const STORE_KEY = "ytz-ata-v1";
+const BOARD_CACHE_KEY = "ytz-board-v1";
 
 /* Proxies tried in order; the last one that worked is tried first next time.
    jina is asked for raw HTML: the markdown view only carries the airport
    page's visible "Today" table, while the HTML holds Tomorrow rows too. */
 const PROXIES = [
-  { url: (u) => `https://r.jina.ai/${u}`, headers: { "x-respond-with": "html" } },
+  // x-engine: direct skips jina's headless-browser render (~0.6 s vs 20 s cold)
+  { url: (u) => `https://r.jina.ai/${u}`, headers: { "x-respond-with": "html", "x-engine": "direct" } },
   { url: (u) => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}` },
   { url: (u) => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(u)}` },
 ];
@@ -219,6 +222,19 @@ function parseBoardText(text) {
   return flights;
 }
 
+/* Paint the last good board immediately on startup while fresh data loads.
+   Deliberately skips applyBoard so stale statuses can't stamp false ATAs. */
+function paintCachedBoard() {
+  try {
+    const c = JSON.parse(localStorage.getItem(BOARD_CACHE_KEY) || "null");
+    if (c && Date.now() - c.t < 24 * 3_600_000 && Array.isArray(c.flights) && c.flights.length) {
+      state.flights = c.flights;
+      state.boardFetchedAt = c.t;
+      render();
+    }
+  } catch {}
+}
+
 async function fetchBoard() {
   const target = `${BOARD_URL}?_=${Date.now()}`;
   let lastErr = null;
@@ -226,7 +242,7 @@ async function fetchBoard() {
     const idx = (state.proxyIdx + i) % PROXIES.length;
     try {
       const ctrl = new AbortController();
-      const timer = setTimeout(() => ctrl.abort(), 25_000);
+      const timer = setTimeout(() => ctrl.abort(), 12_000);
       const p = PROXIES[idx];
       const res = await fetch(p.url(target), { signal: ctrl.signal, headers: p.headers || {} });
       clearTimeout(timer);
@@ -238,6 +254,9 @@ async function fetchBoard() {
       applyBoard(flights);
       state.boardFetchedAt = Date.now();
       state.boardError = null;
+      try {
+        localStorage.setItem(BOARD_CACHE_KEY, JSON.stringify({ t: Date.now(), flights }));
+      } catch {}
       render();
       return;
     } catch (e) {
@@ -521,14 +540,24 @@ setInterval(() => { $("clock").textContent = fmtClock(new Date()); }, 1000);
 $("clock").textContent = fmtClock(new Date());
 
 let adsbTimer = null;
+function nextAdsbDelay() {
+  if (document.hidden) return ADSB_HIDDEN_INTERVAL_MS;
+  for (const s of state.aircraft.values()) {
+    if (Date.now() - s.ts < 120_000 && !s.grounded && s.dist < 80) return ADSB_FAST_MS;
+  }
+  return ADSB_BASE_MS;
+}
 function scheduleAdsb() {
-  clearInterval(adsbTimer);
-  const ms = document.hidden ? ADSB_HIDDEN_INTERVAL_MS : ADSB_INTERVAL_MS;
-  adsbTimer = setInterval(fetchAdsb, ms);
+  clearTimeout(adsbTimer);
+  adsbTimer = setTimeout(() => fetchAdsb().then(scheduleAdsb), nextAdsbDelay());
 }
 document.addEventListener("visibilitychange", () => {
-  scheduleAdsb();
-  if (!document.hidden) { fetchAdsb(); fetchBoard(); }
+  if (!document.hidden) {
+    fetchAdsb().then(scheduleAdsb);
+    fetchBoard();
+  } else {
+    scheduleAdsb();
+  }
 });
 
 /* Refetch the board when the Toronto day rolls over (Tomorrow becomes Today). */
@@ -542,10 +571,10 @@ setInterval(() => {
   }
 }, 60_000);
 
-/* Keep relative "Xs ago" freshness text ticking. */
-setInterval(render, 10_000);
+/* Keep countdowns and "Xs ago" freshness text ticking. */
+setInterval(render, 5_000);
 
+paintCachedBoard();
 fetchBoard();
-fetchAdsb();
+fetchAdsb().then(scheduleAdsb);
 setInterval(fetchBoard, BOARD_INTERVAL_MS);
-scheduleAdsb();

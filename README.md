@@ -9,7 +9,7 @@ A zero-backend, auto-updating arrivals board for **Billy Bishop Toronto City Air
 | Column | Source |
 |---|---|
 | Sched / Flight / Airline / From / Status | Billy Bishop's official arrivals feed (refreshed every 60 s) |
-| **ATA** | While inbound: a live countdown to predicted touchdown ("in 11 min · 10:38 AM"), computed from the aircraft's real ADS-B position and speed (radar polled every 20 s). Once the plane is on the ground at YTZ the page stamps that moment as the actual arrival time. Flights that landed before the page was opened show the airport's own reported time, marked "≈". |
+| **ATA** | While inbound: a live countdown to predicted touchdown ("in 11 min · 10:38 AM"), computed from the aircraft's real ADS-B position and speed. Radar is polled every 15 s, accelerating to every 6 s once an aircraft is within 80 km. The moment the plane is on the ground at YTZ, that time is stamped as the actual arrival. Flights that landed before the page was opened show the airport's own reported time, marked "≈". |
 
 The page updates itself — no refresh needed. Click any row for live telemetry (altitude, speed, distance out, route progress).
 
