@@ -100,6 +100,8 @@ td.eta .eta-note, td.ata .ata-note { display: block; font-size: 10px; color: var
 td.ata { color: var(--green); font-weight: 600; }
 td.ata .approx { color: var(--text-dim); font-weight: 400; }
 td.flightno { font-family: var(--mono); font-weight: 700; letter-spacing: 1px; }
+td.flightno a { color: inherit; text-decoration: none; border-bottom: 1px dashed var(--text-faint); }
+td.flightno a:hover { color: var(--cyan); border-bottom: 1px solid var(--cyan); text-decoration: none; }
 
 .airline-tag { font-size: 12px; font-weight: 700; letter-spacing: .5px; padding: 3px 9px; border-radius: 20px; white-space: nowrap; }
 .airline-tag.pd { color: var(--porter); background: rgba(159,197,255,.12); }

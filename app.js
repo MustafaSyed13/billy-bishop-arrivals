@@ -347,7 +347,7 @@ function viewOf(f) {
     ac: acFresh ? ac : null,
   };
 
-  if (st === "cancelled") { v.statusCls = "cancelled"; v.etaMain = "—"; return v; }
+  if (st === "cancelled") { v.statusCls = "cancelled"; v.etaMain = "—"; v.etaSub = "cancelled"; return v; }
 
   const landed = !!ata || st === "arrived";
 
@@ -395,6 +395,13 @@ function viewOf(f) {
 }
 
 /* ---------------- rendering ---------------- */
+/* FlightAware ident: the live radar callsign when we have one (most exact),
+   otherwise Porter flights track as POE + number, Air Canada (Jazz) as QK + number. */
+function faIdent(f, v) {
+  if (v.ac && v.ac.cs) return v.ac.cs.replace(/\s+/g, "");
+  return (f.airlineCls === "pd" ? "POE" : "QK") + f.flight.replace(/\D/g, "");
+}
+
 function render() {
   const rows = $("rows");
   const q = state.search.trim().toLowerCase();
@@ -416,16 +423,16 @@ function render() {
     html += `
 <tr class="${rowCls.join(" ")}" data-flight="${esc(f.flight)}">
   <td class="sched">${v.schedTxt}</td>
-  <td class="flightno">${esc(f.flight)}</td>
+  <td class="flightno"><a href="https://www.flightaware.com/live/flight/${esc(faIdent(f, v))}" target="_blank" rel="noopener" title="Track ${esc(f.flight)} on FlightAware">${esc(f.flight)}</a></td>
   <td class="airline"><span class="airline-tag ${f.airlineCls}">${esc(f.airline)}</span></td>
   <td class="from"><span class="code">${esc(f.code)}</span><span class="city">${esc(f.city)}</span></td>
   <td class="eta${v.etaLive ? " live" : ""}${v.ataApprox ? " approx" : ""}"><span class="eta-main">${esc(v.etaMain)}</span>${v.etaSub ? `<span class="eta-note">${esc(v.etaSub)}</span>` : ""}</td>
-  <td class="status"><span class="chip ${v.statusCls}">${esc(v.statusTxt)}</span></td>
+
 </tr>`;
     if (state.expanded.has(f.flight)) html += detailRow(f, v);
   }
 
-  rows.innerHTML = html || `<td colspan="6" class="empty">${
+  rows.innerHTML = html || `<td colspan="5" class="empty">${
     state.boardFetchedAt
       ? (q ? "No flights match your search." : `No U.S. arrivals listed for ${state.tab.toLowerCase()}.`)
       : state.boardError
@@ -487,7 +494,7 @@ function detailRow(f, v) {
         ? "Flight cancelled."
         : "Not yet visible on radar — the aircraft appears here once airborne and in range (~460 km).";
   }
-  return `<tr class="detail"><td colspan="6">${tele}</td></tr>`;
+  return `<tr class="detail"><td colspan="5">${tele}</td></tr>`;
 }
 
 /* ---------------- wiring ---------------- */
@@ -502,6 +509,7 @@ $("tabToday").addEventListener("click", () => setTab("Today"));
 $("tabTomorrow").addEventListener("click", () => setTab("Tomorrow"));
 $("search").addEventListener("input", (e) => { state.search = e.target.value; render(); });
 $("rows").addEventListener("click", (e) => {
+  if (e.target.closest("a")) return; // flight-number links go to FlightAware
   const tr = e.target.closest("tr.flight-row");
   if (!tr) return;
   const id = tr.dataset.flight;
