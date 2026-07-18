@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="description" content="Live U.S. arrivals board for Billy Bishop Toronto City Airport (YTZ) — real-time status, ETA and actual touchdown times.">
+<title>YTZ · U.S. Arrivals — Billy Bishop Live Board</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛬</text></svg>">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <div class="brand-code">YTZ</div>
+    <div class="brand-text">
+      <h1>Billy Bishop Toronto City Airport</h1>
+      <div class="brand-sub">U.S. ARRIVALS · LIVE BOARD</div>
+    </div>
+  </div>
+  <div class="clockbox">
+    <div class="live-ind"><span class="dot" id="liveDot"></span><span id="liveLabel">LIVE</span></div>
+    <div class="clock" id="clock">--:--:--</div>
+    <div class="clock-sub">Toronto local time</div>
+  </div>
+</header>
+
+<div class="controls">
+  <div class="tabs" role="tablist">
+    <button class="tab active" id="tabToday" role="tab">Today</button>
+    <button class="tab" id="tabTomorrow" role="tab">Tomorrow</button>
+  </div>
+  <input type="search" id="search" class="search" placeholder="Search flight or city… (e.g. PD2720, EWR, Boston)" autocomplete="off">
+  <div class="freshness" id="freshness">connecting…</div>
+</div>
+
+<div class="board-wrap">
+  <div class="banner" id="banner" hidden></div>
+  <table class="board" id="board">
+    <thead>
+      <tr>
+        <th class="col-sched">Sched</th>
+        <th class="col-flight">Flight</th>
+        <th class="col-airline">Airline</th>
+        <th class="col-from">From</th>
+        <th class="col-eta">ETA</th>
+        <th class="col-ata">ATA <span class="th-live" title="Actual touchdown time, detected live from the aircraft's ADS-B transponder">●</span></th>
+        <th class="col-gate">Gate</th>
+        <th class="col-status">Status</th>
+      </tr>
+    </thead>
+    <tbody id="rows">
+      <tr><td colspan="8" class="empty">Loading arrivals…</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<footer class="foot">
+  <p>
+    Unofficial informational display — always confirm with your airline.
+    Schedule &amp; status: <a href="https://www.billybishopairport.com/flights/arrivals/" target="_blank" rel="noopener">billybishopairport.com</a>.
+    Live aircraft positions: <a href="https://airplanes.live" target="_blank" rel="noopener">airplanes.live</a> ADS-B network.
+    Billy Bishop does not publish arrival gate numbers, so the gate column stays empty.
+  </p>
+</footer>
+
+<script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,153 @@
+:root {
+  --bg: #0b0e14;
+  --bg-panel: #121722;
+  --bg-row: #141a27;
+  --bg-row-alt: #10151f;
+  --bg-row-hover: #1b2334;
+  --line: #232c3f;
+  --text: #e8edf6;
+  --text-dim: #8a94a8;
+  --text-faint: #5a6478;
+  --amber: #ffb52e;
+  --green: #3ddc84;
+  --cyan: #4cc3ff;
+  --red: #ff5d5d;
+  --porter: #9fc5ff;
+  --aircanada: #ff8f8f;
+  --mono: "SF Mono", "Cascadia Code", Consolas, "Roboto Mono", monospace;
+  --sans: -apple-system, "Segoe UI", Roboto, Inter, system-ui, sans-serif;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+html, body { background: var(--bg); color: var(--text); font-family: var(--sans); }
+body { min-height: 100vh; display: flex; flex-direction: column; }
+
+a { color: var(--cyan); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+/* ---------- header ---------- */
+.topbar {
+  display: flex; justify-content: space-between; align-items: center; gap: 16px;
+  padding: 18px 24px 14px;
+  border-bottom: 1px solid var(--line);
+  background: linear-gradient(180deg, #0e1320 0%, var(--bg) 100%);
+}
+.brand { display: flex; align-items: center; gap: 14px; min-width: 0; }
+.brand-code {
+  font-family: var(--mono); font-size: 30px; font-weight: 700; letter-spacing: 2px;
+  color: var(--amber); border: 2px solid var(--amber); border-radius: 10px;
+  padding: 6px 12px; flex: none;
+}
+.brand-text h1 { font-size: 17px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.brand-sub { font-size: 12px; letter-spacing: 3px; color: var(--text-dim); margin-top: 3px; }
+
+.clockbox { text-align: right; flex: none; }
+.clock { font-family: var(--mono); font-size: 26px; font-weight: 600; letter-spacing: 1px; }
+.clock-sub { font-size: 11px; color: var(--text-faint); }
+.live-ind { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; letter-spacing: 2px; color: var(--green); font-weight: 700; }
+.live-ind.stale { color: var(--amber); }
+.live-ind.down { color: var(--red); }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; animation: pulse 1.6s ease-in-out infinite; }
+@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .25; } }
+
+/* ---------- controls ---------- */
+.controls {
+  display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+  padding: 12px 24px;
+}
+.tabs { display: flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; flex: none; }
+.tab {
+  background: none; border: none; color: var(--text-dim); font: 600 13px var(--sans);
+  padding: 8px 18px; cursor: pointer;
+}
+.tab.active { background: var(--amber); color: #14100a; }
+.search {
+  flex: 1 1 220px; max-width: 380px;
+  background: var(--bg-panel); border: 1px solid var(--line); border-radius: 8px;
+  color: var(--text); font: 400 13px var(--sans); padding: 9px 12px; outline: none;
+}
+.search:focus { border-color: var(--amber); }
+.freshness { margin-left: auto; font-family: var(--mono); font-size: 11px; color: var(--text-faint); text-align: right; line-height: 1.5; }
+
+/* ---------- board ---------- */
+.board-wrap { flex: 1; overflow-x: auto; padding: 0 16px 24px; }
+.banner {
+  margin: 0 8px 10px; padding: 10px 14px; border-radius: 8px; font-size: 13px;
+  background: #3a2a12; color: var(--amber); border: 1px solid #5c431d;
+}
+.board { width: 100%; border-collapse: collapse; min-width: 780px; }
+.board th {
+  font-size: 11px; letter-spacing: 2px; text-transform: uppercase; color: var(--text-dim);
+  text-align: left; padding: 10px 12px; border-bottom: 2px solid var(--line);
+  position: sticky; top: 0; background: var(--bg); z-index: 2;
+}
+.th-live { color: var(--green); font-size: 9px; vertical-align: middle; }
+.board td { padding: 11px 12px; border-bottom: 1px solid var(--line); font-size: 15px; vertical-align: middle; }
+tr.flight-row { cursor: pointer; }
+tr.flight-row:nth-child(4n+1) td { background: var(--bg-row-alt); }
+tr.flight-row:hover td { background: var(--bg-row-hover); }
+tr.flight-row.landed td { opacity: .62; }
+tr.flight-row.cancelled td { opacity: .5; }
+
+td.sched, td.eta, td.ata { font-family: var(--mono); white-space: nowrap; }
+td.eta { color: var(--amber); font-weight: 600; }
+td.eta .eta-live { color: var(--green); }
+td.eta .eta-note, td.ata .ata-note { display: block; font-size: 10px; color: var(--text-faint); font-family: var(--sans); margin-top: 2px; }
+td.ata { color: var(--green); font-weight: 600; }
+td.ata .approx { color: var(--text-dim); font-weight: 400; }
+td.flightno { font-family: var(--mono); font-weight: 700; letter-spacing: 1px; }
+td.gate { color: var(--text-faint); text-align: center; }
+
+.airline-tag { font-size: 12px; font-weight: 700; letter-spacing: .5px; padding: 3px 9px; border-radius: 20px; white-space: nowrap; }
+.airline-tag.pd { color: var(--porter); background: rgba(159,197,255,.12); }
+.airline-tag.ac { color: var(--aircanada); background: rgba(255,143,143,.12); }
+
+td.from .code { font-family: var(--mono); font-weight: 700; color: var(--cyan); margin-right: 8px; }
+td.from .city { color: var(--text-dim); font-size: 13px; }
+
+.chip {
+  display: inline-block; font-size: 12px; font-weight: 700; letter-spacing: .8px;
+  padding: 4px 11px; border-radius: 6px; text-transform: uppercase; white-space: nowrap;
+}
+.chip.ontime   { color: var(--green); background: rgba(61,220,132,.12); }
+.chip.early    { color: var(--cyan); background: rgba(76,195,255,.12); }
+.chip.delayed  { color: var(--amber); background: rgba(255,181,46,.14); }
+.chip.landed   { color: #9ee7bf; background: rgba(61,220,132,.08); }
+.chip.cancelled{ color: var(--red); background: rgba(255,93,93,.13); }
+.chip.inflight { color: var(--cyan); background: rgba(76,195,255,.12); animation: pulse 2.4s ease-in-out infinite; }
+
+.empty { text-align: center; color: var(--text-faint); padding: 40px 0 !important; font-size: 14px; }
+
+/* ---------- expanded detail row ---------- */
+tr.detail td {
+  background: #0d1420; padding: 14px 18px 16px; font-size: 13px; color: var(--text-dim);
+}
+.tele { display: flex; flex-wrap: wrap; gap: 22px; align-items: center; }
+.tele .kv { font-family: var(--mono); font-size: 13px; }
+.tele .kv b { color: var(--text); font-weight: 600; }
+.tele .kv label { display: block; font: 600 9px var(--sans); letter-spacing: 1.5px; color: var(--text-faint); text-transform: uppercase; margin-bottom: 2px; }
+.progress { flex: 1 1 180px; min-width: 160px; }
+.progress .bar { height: 6px; background: var(--line); border-radius: 3px; position: relative; }
+.progress .fill { height: 100%; background: var(--cyan); border-radius: 3px; transition: width 1s; }
+.progress .plane { position: absolute; top: -8px; transform: translateX(-50%); font-size: 14px; transition: left 1s; }
+.progress .ends { display: flex; justify-content: space-between; font: 600 10px var(--mono); color: var(--text-faint); margin-top: 5px; }
+
+.foot { padding: 14px 24px 22px; border-top: 1px solid var(--line); }
+.foot p { font-size: 11px; color: var(--text-faint); line-height: 1.6; max-width: 900px; }
+
+/* ---------- mobile ---------- */
+@media (max-width: 720px) {
+  .topbar { padding: 12px 14px 10px; }
+  .brand-code { font-size: 20px; padding: 4px 8px; }
+  .brand-text h1 { font-size: 13px; white-space: normal; }
+  .brand-sub { letter-spacing: 1.5px; font-size: 10px; }
+  .clock { font-size: 18px; }
+  .controls { padding: 10px 14px; }
+  .freshness { flex-basis: 100%; text-align: left; margin-left: 0; }
+  .board { min-width: 0; }
+  .board th, .board td { padding: 9px 7px; }
+  .col-sched, td.sched, .col-gate, td.gate, .col-airline, td.airline { display: none; }
+  td.from .city { display: none; }
+  .board td { font-size: 14px; }
+}
