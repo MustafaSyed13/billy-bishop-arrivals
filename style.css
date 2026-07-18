@@ -94,6 +94,8 @@ td.sched, td.eta, td.ata { font-family: var(--mono); white-space: nowrap; }
 td.eta { color: var(--amber); font-weight: 600; }
 td.eta .eta-main { display: block; }
 td.eta.live .eta-main { color: var(--green); font-size: 17px; letter-spacing: .5px; }
+td.eta.approx .eta-main { color: var(--text-dim); font-weight: 500; }
+tr.flight-row.landed td.eta .eta-main { color: var(--green); }
 td.eta .eta-note, td.ata .ata-note { display: block; font-size: 10px; color: var(--text-faint); font-family: var(--sans); margin-top: 2px; }
 td.ata { color: var(--green); font-weight: 600; }
 td.ata .approx { color: var(--text-dim); font-weight: 400; }

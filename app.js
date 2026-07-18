@@ -368,8 +368,8 @@ function viewOf(f) {
       v.ataTxt = `≈ ${fmt12(f.time)}`;
       v.ataApprox = true; v.ataNote = "airport board";
     }
-    v.etaMain = v.ataTxt.replace(/^≈ /, "");
-    v.etaSub = "landed";
+    v.etaMain = v.ataTxt;
+    v.etaSub = v.ataNote;
     return v;
   }
 
@@ -419,14 +419,13 @@ function render() {
   <td class="flightno">${esc(f.flight)}</td>
   <td class="airline"><span class="airline-tag ${f.airlineCls}">${esc(f.airline)}</span></td>
   <td class="from"><span class="code">${esc(f.code)}</span><span class="city">${esc(f.city)}</span></td>
-  <td class="eta${v.etaLive ? " live" : ""}"><span class="eta-main">${esc(v.etaMain)}</span>${v.etaSub ? `<span class="eta-note">${esc(v.etaSub)}</span>` : ""}</td>
-  <td class="ata"><span class="${v.ataApprox ? "approx" : ""}">${v.ataTxt}</span>${v.ataNote ? `<span class="ata-note">${esc(v.ataNote)}</span>` : ""}</td>
+  <td class="eta${v.etaLive ? " live" : ""}${v.ataApprox ? " approx" : ""}"><span class="eta-main">${esc(v.etaMain)}</span>${v.etaSub ? `<span class="eta-note">${esc(v.etaSub)}</span>` : ""}</td>
   <td class="status"><span class="chip ${v.statusCls}">${esc(v.statusTxt)}</span></td>
 </tr>`;
     if (state.expanded.has(f.flight)) html += detailRow(f, v);
   }
 
-  rows.innerHTML = html || `<td colspan="7" class="empty">${
+  rows.innerHTML = html || `<td colspan="6" class="empty">${
     state.boardFetchedAt
       ? (q ? "No flights match your search." : `No U.S. arrivals listed for ${state.tab.toLowerCase()}.`)
       : state.boardError
@@ -488,7 +487,7 @@ function detailRow(f, v) {
         ? "Flight cancelled."
         : "Not yet visible on radar — the aircraft appears here once airborne and in range (~460 km).";
   }
-  return `<tr class="detail"><td colspan="7">${tele}</td></tr>`;
+  return `<tr class="detail"><td colspan="6">${tele}</td></tr>`;
 }
 
 /* ---------------- wiring ---------------- */
