@@ -16,11 +16,13 @@ const ADSB_INTERVAL_MS = 20_000;
 const ADSB_HIDDEN_INTERVAL_MS = 60_000;
 const STORE_KEY = "ytz-ata-v1";
 
-/* Proxies tried in order; the last one that worked is tried first next time. */
+/* Proxies tried in order; the last one that worked is tried first next time.
+   jina is asked for raw HTML: the markdown view only carries the airport
+   page's visible "Today" table, while the HTML holds Tomorrow rows too. */
 const PROXIES = [
-  (u) => `https://r.jina.ai/${u}`,
-  (u) => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
-  (u) => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(u)}`,
+  { url: (u) => `https://r.jina.ai/${u}`, headers: { "x-respond-with": "html" } },
+  { url: (u) => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}` },
+  { url: (u) => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(u)}` },
 ];
 
 /* Origin city (as spelled on the airport board) -> airport info.
@@ -225,7 +227,8 @@ async function fetchBoard() {
     try {
       const ctrl = new AbortController();
       const timer = setTimeout(() => ctrl.abort(), 25_000);
-      const res = await fetch(PROXIES[idx](target), { signal: ctrl.signal });
+      const p = PROXIES[idx];
+      const res = await fetch(p.url(target), { signal: ctrl.signal, headers: p.headers || {} });
       clearTimeout(timer);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const text = await res.text();
