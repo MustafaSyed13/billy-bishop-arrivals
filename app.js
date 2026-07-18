@@ -403,13 +403,12 @@ function render() {
   <td class="from"><span class="code">${esc(f.code)}</span><span class="city">${esc(f.city)}</span></td>
   <td class="eta"><span class="${v.etaLive ? "eta-live" : ""}">${v.etaTxt}</span>${v.etaNote ? `<span class="eta-note">${esc(v.etaNote)}</span>` : ""}</td>
   <td class="ata"><span class="${v.ataApprox ? "approx" : ""}">${v.ataTxt}</span>${v.ataNote ? `<span class="ata-note">${esc(v.ataNote)}</span>` : ""}</td>
-  <td class="gate" title="Billy Bishop does not publish arrival gate numbers">—</td>
   <td class="status"><span class="chip ${v.statusCls}">${esc(v.statusTxt)}</span></td>
 </tr>`;
     if (state.expanded.has(f.flight)) html += detailRow(f, v);
   }
 
-  rows.innerHTML = html || `<td colspan="8" class="empty">${
+  rows.innerHTML = html || `<td colspan="7" class="empty">${
     state.boardFetchedAt
       ? (q ? "No flights match your search." : `No U.S. arrivals listed for ${state.tab.toLowerCase()}.`)
       : state.boardError
@@ -471,7 +470,7 @@ function detailRow(f, v) {
         ? "Flight cancelled."
         : "Not yet visible on radar — the aircraft appears here once airborne and in range (~460 km).";
   }
-  return `<tr class="detail"><td colspan="8">${tele}</td></tr>`;
+  return `<tr class="detail"><td colspan="7">${tele}</td></tr>`;
 }
 
 /* ---------------- wiring ---------------- */

@@ -6,7 +6,7 @@
 <meta name="description" content="Live U.S. arrivals board for Billy Bishop Toronto City Airport (YTZ) — real-time status, ETA and actual touchdown times.">
 <title>YTZ · U.S. Arrivals — Billy Bishop Live Board</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛬</text></svg>">
-<link rel="stylesheet" href="style.css?v=2">
+<link rel="stylesheet" href="style.css?v=3">
 </head>
 <body>
 
@@ -45,12 +45,11 @@
         <th class="col-from">From</th>
         <th class="col-eta">ETA</th>
         <th class="col-ata">ATA <span class="th-live" title="Actual touchdown time, detected live from the aircraft's ADS-B transponder">●</span></th>
-        <th class="col-gate">Gate</th>
         <th class="col-status">Status</th>
       </tr>
     </thead>
     <tbody id="rows">
-      <tr><td colspan="8" class="empty">Loading arrivals…</td></tr>
+      <tr><td colspan="7" class="empty">Loading arrivals…</td></tr>
     </tbody>
   </table>
 </div>
@@ -60,10 +59,9 @@
     Unofficial informational display — always confirm with your airline.
     Schedule &amp; status: <a href="https://www.billybishopairport.com/flights/arrivals/" target="_blank" rel="noopener">billybishopairport.com</a>.
     Live aircraft positions: <a href="https://airplanes.live" target="_blank" rel="noopener">airplanes.live</a> ADS-B network.
-    Billy Bishop does not publish arrival gate numbers, so the gate column stays empty.
   </p>
 </footer>
 
-<script src="app.js?v=2"></script>
+<script src="app.js?v=3"></script>
 </body>
 </html>

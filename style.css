@@ -97,7 +97,6 @@ td.eta .eta-note, td.ata .ata-note { display: block; font-size: 10px; color: var
 td.ata { color: var(--green); font-weight: 600; }
 td.ata .approx { color: var(--text-dim); font-weight: 400; }
 td.flightno { font-family: var(--mono); font-weight: 700; letter-spacing: 1px; }
-td.gate { color: var(--text-faint); text-align: center; }
 
 .airline-tag { font-size: 12px; font-weight: 700; letter-spacing: .5px; padding: 3px 9px; border-radius: 20px; white-space: nowrap; }
 .airline-tag.pd { color: var(--porter); background: rgba(159,197,255,.12); }
@@ -147,7 +146,7 @@ tr.detail td {
   .freshness { flex-basis: 100%; text-align: left; margin-left: 0; }
   .board { min-width: 0; }
   .board th, .board td { padding: 9px 7px; }
-  .col-sched, td.sched, .col-gate, td.gate, .col-airline, td.airline { display: none; }
+  .col-sched, td.sched, .col-airline, td.airline { display: none; }
   td.from .city { display: none; }
   .board td { font-size: 14px; }
 }

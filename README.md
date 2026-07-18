@@ -11,7 +11,6 @@ A zero-backend, auto-updating arrivals board for **Billy Bishop Toronto City Air
 | Sched / Flight / Airline / From / Status | Billy Bishop's official arrivals feed (refreshed every 60 s) |
 | ETA (AM/PM) | Airport feed, refined live from the aircraft's actual position & speed when airborne |
 | **ATA** | Detected live from the plane's ADS-B transponder — the page stamps the touchdown the moment the aircraft is on the ground at YTZ (radar polled every 20 s) |
-| Gate | YTZ does not publish arrival gates in any public feed, so this stays "—" |
 
 The page updates itself — no refresh needed. Click any row for live telemetry (altitude, speed, distance out, route progress).
 
