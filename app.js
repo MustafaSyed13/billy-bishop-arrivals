@@ -10,6 +10,8 @@
 
 const YTZ = { lat: 43.6275, lon: -79.3962 };
 const BOARD_URL = "https://www.billybishopairport.com/flights/arrivals/";
+const DEPS_URL = "https://www.billybishopairport.com/flights/departures/";
+const DEPS_INTERVAL_MS = 90_000;
 const ADSB_URL = "https://api.airplanes.live/v2/point/43.6275/-79.3962/250";
 const BOARD_INTERVAL_MS = 60_000;
 const ADSB_BASE_MS = 15_000;      // radar poll cadence, nothing close by
@@ -66,6 +68,14 @@ const AIRLINES = {
 /* ---------------- state ---------------- */
 const state = {
   flights: [],            // parsed board rows (US only, PD/AC only)
+  arrRaw: [],             // every arrival row (all airlines) for the cancellations panel
+  depRaw: [],             // every departure row
+  prevArr: new Map(),     // cancellation flip detection, arrivals
+  prevDep: new Map(),     // cancellation flip detection, departures
+  depsFetchedAt: 0,
+  cxlOpen: true,
+  focus: null,            // flight currently focused on the map (route drawn)
+  focusFit: false,
   aircraft: new Map(),    // flightNo -> latest matched ADS-B sample
   ata: loadAta(),         // "YYYY-MM-DD|PD2720" -> {t: epochMs, src}
   justLanded: new Map(),  // flightNo -> epochMs, drives the green row flash
@@ -190,8 +200,14 @@ function buildFlight(day, time, flightNo, origin, status) {
   };
 }
 
-function parseBoardText(text) {
-  const flights = [];
+/* Raw rows (every airline, both feeds share this format). */
+function parseRows(text) {
+  const rows = [];
+  const push = (day, time, flight, origin, status) => {
+    if (!/^[A-Z]{2}\d{2,4}$/.test(flight)) return;
+    if (!/^\d{1,2}:\d{2}$/.test(time)) return;
+    rows.push({ day, time, flight, origin: origin.trim(), status: status.trim() });
+  };
   if (text.includes("<tr")) {
     // raw HTML from a plain proxy
     const rowRe = /<tr[^>]*class=['"]item (Today|Tomorrow)['"][\s\S]*?<\/tr>/g;
@@ -202,10 +218,7 @@ function parseBoardText(text) {
       let tm;
       tdRe.lastIndex = 0;
       while ((tm = tdRe.exec(rm[0]))) tds.push(tm[1].replace(/<[^>]*>/g, "").trim());
-      if (tds.length >= 6) {
-        const f = buildFlight(rm[1], tds[1], tds[3], tds[4], tds[5]);
-        if (f) flights.push(f);
-      }
+      if (tds.length >= 6) push(rm[1], tds[1], tds[3], tds[4], tds[5]);
     }
   } else {
     // markdown table from the jina.ai reader
@@ -215,13 +228,10 @@ function parseBoardText(text) {
       const c = t.split("|").map((x) => x.trim()).slice(1, -1);
       if (c.length < 6) continue;
       if (!/^(Today|Tomorrow)$/i.test(c[0])) continue;
-      if (!/^[A-Z]{2}\d{2,4}$/.test(c[3])) continue;
-      if (!/^\d{1,2}:\d{2}$/.test(c[1])) continue;
-      const f = buildFlight(c[0][0].toUpperCase() + c[0].slice(1).toLowerCase(), c[1], c[3], c[4], c[5]);
-      if (f) flights.push(f);
+      push(c[0][0].toUpperCase() + c[0].slice(1).toLowerCase(), c[1], c[3], c[4], c[5]);
     }
   }
-  return flights;
+  return rows;
 }
 
 /* Paint the last good board immediately on startup while fresh data loads.
@@ -237,8 +247,7 @@ function paintCachedBoard() {
   } catch {}
 }
 
-async function fetchBoard() {
-  const target = `${BOARD_URL}?_=${Date.now()}`;
+async function fetchViaProxies(target) {
   let lastErr = null;
   for (let i = 0; i < PROXIES.length; i++) {
     const idx = (state.proxyIdx + i) % PROXIES.length;
@@ -249,23 +258,59 @@ async function fetchBoard() {
       const res = await fetch(p.url(target), { signal: ctrl.signal, headers: p.headers || {} });
       clearTimeout(timer);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const text = await res.text();
-      const flights = parseBoardText(text);
-      if (!flights.length) throw new Error("no rows parsed");
+      const rows = parseRows(await res.text());
+      if (!rows.length) throw new Error("no rows parsed");
       state.proxyIdx = idx;
-      applyBoard(flights);
-      state.boardFetchedAt = Date.now();
-      state.boardError = null;
-      try {
-        localStorage.setItem(BOARD_CACHE_KEY, JSON.stringify({ t: Date.now(), flights }));
-      } catch {}
-      render();
-      return;
+      return rows;
     } catch (e) {
       lastErr = e;
     }
   }
-  state.boardError = lastErr ? String(lastErr.message || lastErr) : "unknown";
+  throw lastErr || new Error("all proxies failed");
+}
+
+/* Notify (once) when a flight flips to Cancelled while we watch. */
+function trackCancellations(raw, prevMap, kind) {
+  for (const r of raw) {
+    if (r.flight.startsWith("TS")) continue;
+    const key = `${r.flight}|${r.day}`;
+    const now = r.status.toLowerCase();
+    const prev = prevMap.get(key);
+    if (prev && prev !== "cancelled" && now === "cancelled" && r.day === "Today") {
+      notify(`${torontoDateKey()}|${r.flight}|cxl`, `${r.flight} CANCELLED`,
+        kind === "arrival"
+          ? `Arrival from ${r.origin} - was due ${fmt12(r.time)}`
+          : `Departure to ${r.origin} - was leaving ${fmt12(r.time)}`);
+    }
+    prevMap.set(key, now);
+  }
+}
+
+async function fetchBoard() {
+  try {
+    const raw = await fetchViaProxies(`${BOARD_URL}?_=${Date.now()}`);
+    const flights = raw.map((r) => buildFlight(r.day, r.time, r.flight, r.origin, r.status)).filter(Boolean);
+    applyBoard(flights);
+    state.arrRaw = raw;
+    trackCancellations(raw, state.prevArr, "arrival");
+    state.boardFetchedAt = Date.now();
+    state.boardError = null;
+    try {
+      localStorage.setItem(BOARD_CACHE_KEY, JSON.stringify({ t: Date.now(), flights }));
+    } catch {}
+  } catch (e) {
+    state.boardError = String(e.message || e);
+  }
+  render();
+}
+
+async function fetchDeps() {
+  try {
+    const raw = await fetchViaProxies(`${DEPS_URL}?_=${Date.now()}`);
+    state.depRaw = raw;
+    trackCancellations(raw, state.prevDep, "departure");
+    state.depsFetchedAt = Date.now();
+  } catch {} // panel simply shows arrivals-only when the departures feed is down
   render();
 }
 
@@ -495,6 +540,42 @@ function render() {
     banner.hidden = false;
     banner.textContent = "Arrivals feed temporarily unreachable — showing last good data, retrying every minute.";
   } else banner.hidden = true;
+
+  renderCancellations();
+}
+
+/* All of today's cancelled flights, arrivals and departures, any airline. */
+function renderCancellations() {
+  const cxl = $("cxl");
+  const items = [];
+  for (const r of state.arrRaw) {
+    if (r.day === "Today" && !r.flight.startsWith("TS") && r.status.toLowerCase() === "cancelled") {
+      items.push({ ...r, kind: "ARRIVAL", prep: "from" });
+    }
+  }
+  for (const r of state.depRaw) {
+    if (r.day === "Today" && !r.flight.startsWith("TS") && r.status.toLowerCase() === "cancelled") {
+      items.push({ ...r, kind: "DEPARTURE", prep: "to" });
+    }
+  }
+  items.sort((a, b) => minutesOfDay(a.time) - minutesOfDay(b.time));
+  cxl.dataset.empty = items.length ? "0" : "1";
+  $("cxlCount").textContent = items.length;
+  const list = $("cxlList");
+  list.hidden = !state.cxlOpen || !items.length;
+  list.innerHTML = items.map((r) => {
+    const cls = r.flight.startsWith("PD") ? "pd" : r.flight.startsWith("AC") ? "ac" : "";
+    const logo = cls
+      ? `<svg class="airline-logo ${cls}" role="img"><use href="#${cls === "pd" ? "porter-logo" : "aircanada-logo"}"></use></svg>`
+      : "";
+    return `<div class="cxl-item">
+      <span class="fno">${esc(r.flight)}</span>
+      <span class="dir">${r.kind}</span>
+      ${logo}
+      <span class="route">${r.prep} ${esc(r.origin)}</span>
+      <span class="was">was ${esc(fmt12(r.time))}</span>
+    </div>`;
+  }).join("");
 }
 
 function detailRow(f, v) {
@@ -587,6 +668,10 @@ const MAP_KEY = "ytz-map-open";
 let map = null;
 const mapMarkers = {};
 let lastMapKey = "";
+let routeLines = [];
+let originMarker = null;
+/* Airliner silhouette (points north, so rotate by the true track directly). */
+const PLANE_PATH = "M21 16v-2l-8-5V3.5c0-.83-.67-1.5-1.5-1.5S10 2.67 10 3.5V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5l8 2.5z";
 
 function initMap() {
   if (map || typeof L === "undefined") return;
@@ -608,13 +693,16 @@ function updateMap() {
     if (!s || s.lat == null || s.grounded || Date.now() - s.ts > 120_000) continue;
     seen.add(f.flight);
     pts.push([s.lat, s.lon]);
-    const rot = Math.round((s.track || 0) - 45);
+    const rot = Math.round(s.track || 0);
     const icon = L.divIcon({
       className: "",
-      html: `<div class="plane-ic ${f.airlineCls}" style="transform:rotate(${rot}deg)">✈</div>`,
-      iconSize: [26, 26], iconAnchor: [13, 13],
+      html: `<svg class="plane-svg ${f.airlineCls}" viewBox="0 0 24 24" style="transform:rotate(${rot}deg)"><path d="${PLANE_PATH}"/></svg>`,
+      iconSize: [30, 30], iconAnchor: [15, 15],
     });
-    const tip = `${f.flight} · ${Math.round(s.dist)} km`;
+    let tip = `${f.flight} · ${Math.round(s.dist)} km`;
+    if (state.focus === f.flight && s.gs > 40) {
+      tip += ` · ~${Math.max(1, Math.round((s.dist / (s.gs * 1.852)) * 60 + 4))} min`;
+    }
     if (mapMarkers[f.flight]) {
       mapMarkers[f.flight].setLatLng([s.lat, s.lon]);
       mapMarkers[f.flight].setIcon(icon);
@@ -628,11 +716,40 @@ function updateMap() {
   for (const k of Object.keys(mapMarkers)) {
     if (!seen.has(k)) { map.removeLayer(mapMarkers[k]); delete mapMarkers[k]; }
   }
+  drawFocusRoute();
   // Re-frame only when the set of tracked planes changes, so user panning sticks.
-  const key = [...seen].sort().join(",");
+  const key = [...seen].sort().join(",") + (state.focus || "");
   if (key !== lastMapKey) {
     lastMapKey = key;
-    if (pts.length > 1) map.fitBounds(pts, { padding: [28, 28], maxZoom: 9 });
+    if (!state.focus && pts.length > 1) map.fitBounds(pts, { padding: [28, 28], maxZoom: 9 });
+  }
+}
+
+/* Route for the focused flight: solid = flown (origin to plane),
+   dashed = remaining (plane to YTZ). */
+function drawFocusRoute() {
+  routeLines.forEach((l) => map.removeLayer(l));
+  routeLines = [];
+  if (originMarker) { map.removeLayer(originMarker); originMarker = null; }
+  const fNo = state.focus;
+  if (!fNo) return;
+  const f = state.flights.find((x) => x.flight === fNo && x.day === "Today");
+  const s = state.aircraft.get(fNo);
+  const airborne = f && s && !s.grounded && s.lat != null && Date.now() - s.ts < 120_000;
+  if (!airborne) return;
+  const p = [s.lat, s.lon], y = [YTZ.lat, YTZ.lon];
+  if (f.olat != null) {
+    const o = [f.olat, f.olon];
+    routeLines.push(L.polyline([o, p], { color: "#7f8ea0", weight: 2, opacity: .8 }).addTo(map));
+    originMarker = L.circleMarker(o, { radius: 5, color: "#7f8ea0", fillColor: "#7f8ea0", fillOpacity: 1 })
+      .addTo(map)
+      .bindTooltip(`${f.code} · departed`, { permanent: true, direction: "left", className: "plane-label" });
+  }
+  routeLines.push(L.polyline([p, y], { color: "#d22630", weight: 2.5, dashArray: "7 7", opacity: .9 }).addTo(map));
+  if (state.focusFit) {
+    state.focusFit = false;
+    const b = f.olat != null ? [[f.olat, f.olon], p, y] : [p, y];
+    map.fitBounds(b, { padding: [34, 34] });
   }
 }
 
@@ -664,7 +781,26 @@ $("rows").addEventListener("click", (e) => {
   const tr = e.target.closest("tr.flight-row");
   if (!tr) return;
   const id = tr.dataset.flight;
-  state.expanded.has(id) ? state.expanded.delete(id) : state.expanded.add(id);
+  const opening = !state.expanded.has(id);
+  opening ? state.expanded.add(id) : state.expanded.delete(id);
+  // Opening a row of a tracked airborne flight focuses it on the map:
+  // zoom to the plane, draw its route, show remaining time.
+  const s = state.aircraft.get(id);
+  if (opening && s && !s.grounded && Date.now() - s.ts < 120_000) {
+    state.focus = id;
+    state.focusFit = true;
+    setMapOpen(true);
+    updateMap();
+    $("mapWrap").scrollIntoView({ behavior: "smooth", block: "nearest" });
+  } else if (!opening && state.focus === id) {
+    state.focus = null;
+    if (map) updateMap();
+  }
+  render();
+});
+
+$("cxlHead").addEventListener("click", () => {
+  state.cxlOpen = !state.cxlOpen;
   render();
 });
 
@@ -722,5 +858,7 @@ setMapOpen(mapPref !== null ? mapPref === "1" : window.innerWidth > 860);
 
 paintCachedBoard();
 fetchBoard();
+fetchDeps();
 fetchAdsb().then(scheduleAdsb);
 setInterval(fetchBoard, BOARD_INTERVAL_MS);
+setInterval(fetchDeps, DEPS_INTERVAL_MS);
