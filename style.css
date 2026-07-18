@@ -77,16 +77,26 @@ a:hover { text-decoration: underline; }
 .chip-btn:hover { border-color: var(--text-faint); color: var(--text); }
 .chip-btn.on { color: #14100a; background: var(--green); border-color: var(--green); }
 
-/* ---------- live map ---------- */
+/* ---------- live map (light theme) ---------- */
 .map-wrap { margin: 0 24px 12px; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
-#map { height: 300px; background: #0d1420; }
-.leaflet-container { background: #0d1420; font-family: var(--sans); }
+#map { height: 300px; background: #dde6ed; }
+.leaflet-container { background: #dde6ed; font-family: var(--sans); }
 .plane-ic {
   font-size: 20px; line-height: 26px; text-align: center; width: 26px; height: 26px;
-  filter: drop-shadow(0 1px 3px rgba(0,0,0,.9));
+  filter: drop-shadow(0 1px 2px rgba(20, 40, 60, .45));
 }
-.plane-ic.pd { color: var(--porter); }
-.plane-ic.ac { color: var(--aircanada); }
+.plane-ic.pd { color: #175d8d; }
+.plane-ic.ac { color: #d22630; }
+.plane-label {
+  background: rgba(255, 255, 255, .94) !important;
+  border: 1px solid #b9c6d0 !important;
+  color: #16324a !important;
+  font: 700 11px var(--mono) !important;
+  border-radius: 5px !important;
+  padding: 1px 6px !important;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .18) !important;
+}
+.plane-label::before { display: none; }
 
 /* ---------- board ---------- */
 .board-wrap { flex: 1; overflow-x: auto; padding: 0 16px 24px; }
@@ -126,9 +136,9 @@ td.flightno { font-family: var(--mono); font-weight: 700; letter-spacing: 1px; }
 td.flightno a { color: inherit; text-decoration: none; border-bottom: 1px dashed var(--text-faint); }
 td.flightno a:hover { color: var(--cyan); border-bottom: 1px solid var(--cyan); text-decoration: none; }
 
-.airline-tag { font-size: 12px; font-weight: 700; letter-spacing: .5px; padding: 3px 9px; border-radius: 20px; white-space: nowrap; }
-.airline-tag.pd { color: var(--porter); background: rgba(159,197,255,.12); }
-.airline-tag.ac { color: var(--aircanada); background: rgba(255,143,143,.12); }
+.airline-logo { fill: currentColor; display: inline-block; vertical-align: middle; }
+.airline-logo.pd { color: #f4f7fb; width: 60px; height: 21px; }
+.airline-logo.ac { color: #e01933; width: 96px; height: 13px; }
 
 td.from .code { font-family: var(--mono); font-weight: 700; color: var(--cyan); margin-right: 8px; }
 td.from .city { color: var(--text-dim); font-size: 13px; }

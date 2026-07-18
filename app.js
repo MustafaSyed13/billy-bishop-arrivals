@@ -461,7 +461,7 @@ function render() {
 <tr class="${rowCls.join(" ")}" data-flight="${esc(f.flight)}">
   <td class="sched">${v.schedTxt}</td>
   <td class="flightno"><a href="https://www.flightaware.com/live/flight/${esc(faIdent(f, v))}" target="_blank" rel="noopener" title="Track ${esc(f.flight)} on FlightAware">${esc(f.flight)}</a></td>
-  <td class="airline"><span class="airline-tag ${f.airlineCls}">${esc(f.airline)}</span></td>
+  <td class="airline"><svg class="airline-logo ${f.airlineCls}" role="img" aria-label="${esc(f.airline)}"><use href="#${f.airlineCls === "pd" ? "porter-logo" : "aircanada-logo"}"></use></svg></td>
   <td class="from"><span class="code">${esc(f.code)}</span><span class="city">${esc(f.city)}</span></td>
   <td class="eta${v.etaLive ? " live" : ""}${v.ataApprox ? " approx" : ""}"><span class="eta-main">${esc(v.etaMain)}</span>${v.etaSub ? `<span class="eta-note">${esc(v.etaSub)}</span>` : ""}</td>
 
@@ -591,7 +591,7 @@ let lastMapKey = "";
 function initMap() {
   if (map || typeof L === "undefined") return;
   map = L.map("map", { zoomControl: true }).setView([YTZ.lat, YTZ.lon], 8);
-  L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
+  L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png", {
     attribution: "&copy; OpenStreetMap &copy; CARTO", maxZoom: 12,
   }).addTo(map);
   L.circleMarker([YTZ.lat, YTZ.lon], { radius: 6, color: "#ffb52e", fillColor: "#ffb52e", fillOpacity: 1 })
@@ -614,13 +614,15 @@ function updateMap() {
       html: `<div class="plane-ic ${f.airlineCls}" style="transform:rotate(${rot}deg)">✈</div>`,
       iconSize: [26, 26], iconAnchor: [13, 13],
     });
-    const tip = `${f.flight} · ${f.code} → YTZ · ${Math.round(s.dist)} km out`;
+    const tip = `${f.flight} · ${Math.round(s.dist)} km`;
     if (mapMarkers[f.flight]) {
       mapMarkers[f.flight].setLatLng([s.lat, s.lon]);
       mapMarkers[f.flight].setIcon(icon);
       mapMarkers[f.flight].setTooltipContent(tip);
     } else {
-      mapMarkers[f.flight] = L.marker([s.lat, s.lon], { icon }).addTo(map).bindTooltip(tip);
+      mapMarkers[f.flight] = L.marker([s.lat, s.lon], { icon })
+        .addTo(map)
+        .bindTooltip(tip, { permanent: true, direction: "right", offset: [12, 0], className: "plane-label" });
     }
   }
   for (const k of Object.keys(mapMarkers)) {
