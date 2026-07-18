@@ -13,6 +13,12 @@ A zero-backend, auto-updating arrivals board for **Billy Bishop Toronto City Air
 
 The page updates itself — no refresh needed. Click any row for live telemetry (altitude, speed, distance out, route progress).
 
+Also on board:
+- **Installable app (PWA):** service worker + manifest — add it to your phone/desktop home screen, it opens instantly and works offline with the last data.
+- **Landing alerts:** the 🔔 button enables notifications when a flight turns final (~12 km out) and the moment it touches down.
+- **Live map:** the 🗺 button shows every tracked inbound plane moving toward YTZ on a dark map (CARTO/OSM tiles, Leaflet).
+- **Adaptive radar:** 15 s cadence normally, 6 s inside 80 km, 3 s inside 25 km.
+
 ## How it works
 
 - **Schedule/status:** `billybishopairport.com/flights/arrivals/` fetched through free CORS-friendly readers (`r.jina.ai`, with `allorigins` / `codetabs` fallbacks), parsed client-side.

@@ -69,6 +69,24 @@ a:hover { text-decoration: underline; }
 }
 .search:focus { border-color: var(--amber); }
 .freshness { margin-left: auto; font-family: var(--mono); font-size: 11px; color: var(--text-faint); text-align: right; line-height: 1.5; }
+.chip-btn {
+  background: var(--bg-panel); border: 1px solid var(--line); color: var(--text-dim);
+  font: 600 12px var(--sans); padding: 9px 14px; border-radius: 8px; cursor: pointer;
+  white-space: nowrap; flex: none;
+}
+.chip-btn:hover { border-color: var(--text-faint); color: var(--text); }
+.chip-btn.on { color: #14100a; background: var(--green); border-color: var(--green); }
+
+/* ---------- live map ---------- */
+.map-wrap { margin: 0 24px 12px; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+#map { height: 300px; background: #0d1420; }
+.leaflet-container { background: #0d1420; font-family: var(--sans); }
+.plane-ic {
+  font-size: 20px; line-height: 26px; text-align: center; width: 26px; height: 26px;
+  filter: drop-shadow(0 1px 3px rgba(0,0,0,.9));
+}
+.plane-ic.pd { color: var(--porter); }
+.plane-ic.ac { color: var(--aircanada); }
 
 /* ---------- board ---------- */
 .board-wrap { flex: 1; overflow-x: auto; padding: 0 16px 24px; }
@@ -89,6 +107,11 @@ tr.flight-row:nth-child(4n+1) td { background: var(--bg-row-alt); }
 tr.flight-row:hover td { background: var(--bg-row-hover); }
 tr.flight-row.landed td { opacity: .62; }
 tr.flight-row.cancelled td { opacity: .5; }
+@keyframes landflash {
+  0% { background: rgba(61, 220, 132, .38); }
+  100% { background: transparent; }
+}
+tr.flight-row.flash td { animation: landflash 2.4s ease-out 2; }
 
 td.sched, td.eta, td.ata { font-family: var(--mono); white-space: nowrap; }
 td.eta { color: var(--amber); font-weight: 600; }
@@ -140,7 +163,7 @@ tr.detail td {
 .foot { padding: 14px 24px 22px; border-top: 1px solid var(--line); }
 .foot p { font-size: 11px; color: var(--text-faint); line-height: 1.6; max-width: 900px; }
 
-/* ---------- mobile ---------- */
+/* ---------- mobile: card layout ---------- */
 @media (max-width: 720px) {
   .topbar { padding: 12px 14px 10px; }
   .brand-code { font-size: 20px; padding: 4px 8px; }
@@ -149,9 +172,24 @@ tr.detail td {
   .clock { font-size: 18px; }
   .controls { padding: 10px 14px; }
   .freshness { flex-basis: 100%; text-align: left; margin-left: 0; }
+  .map-wrap { margin: 0 10px 10px; }
+  #map { height: 210px; }
+  .board-wrap { padding: 0 10px 20px; }
   .board { min-width: 0; }
-  .board th, .board td { padding: 9px 7px; }
-  .col-sched, td.sched, .col-airline, td.airline { display: none; }
-  td.from .city { display: none; }
-  .board td { font-size: 14px; }
+  .board thead { display: none; }
+  .board, .board tbody { display: block; }
+  tr.flight-row {
+    display: grid; grid-template-columns: 1fr auto; grid-template-rows: auto auto;
+    column-gap: 12px; row-gap: 2px; padding: 12px 8px;
+    border-bottom: 1px solid var(--line);
+  }
+  tr.flight-row td { display: block; padding: 0; border: 0; background: none !important; font-size: 14px; }
+  td.sched, td.airline { display: none; }
+  td.flightno { grid-column: 1; grid-row: 1; font-size: 17px; }
+  td.from { grid-column: 1; grid-row: 2; }
+  td.from .city { font-size: 12px; }
+  td.eta { grid-column: 2; grid-row: 1 / span 2; text-align: right; align-self: center; }
+  td.eta.live .eta-main { font-size: 19px; }
+  tr.detail { display: block; }
+  tr.detail td { display: block; padding: 10px 8px 14px; }
 }

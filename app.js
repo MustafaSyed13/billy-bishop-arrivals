@@ -14,6 +14,7 @@ const ADSB_URL = "https://api.airplanes.live/v2/point/43.6275/-79.3962/250";
 const BOARD_INTERVAL_MS = 60_000;
 const ADSB_BASE_MS = 15_000;      // radar poll cadence, nothing close by
 const ADSB_FAST_MS = 6_000;       // radar poll cadence with an aircraft inside 80 km
+const ADSB_ULTRA_MS = 3_000;      // radar poll cadence with an aircraft on final (< 25 km)
 const ADSB_HIDDEN_INTERVAL_MS = 60_000;
 const STORE_KEY = "ytz-ata-v1";
 const BOARD_CACHE_KEY = "ytz-board-v1";
@@ -67,6 +68,7 @@ const state = {
   flights: [],            // parsed board rows (US only, PD/AC only)
   aircraft: new Map(),    // flightNo -> latest matched ADS-B sample
   ata: loadAta(),         // "YYYY-MM-DD|PD2720" -> {t: epochMs, src}
+  justLanded: new Map(),  // flightNo -> epochMs, drives the green row flash
   prevStatus: new Map(),  // flightNo|day -> last board status (to catch Arrived flips)
   boardFetchedAt: 0,
   adsbFetchedAt: 0,
@@ -277,6 +279,9 @@ function applyBoard(flights) {
     if (prev && prev !== "arrived" && now === "arrived" && !state.ata[ataKey(f)]) {
       state.ata[ataKey(f)] = { t: Date.now(), src: "board" };
       saveAta();
+      state.justLanded.set(f.flight, Date.now());
+      notify(`${ataKey(f)}|landed`, `${f.flight} landed at YTZ`,
+        `Airport board marked it arrived at ${fmt12FromDate(new Date())}`);
     }
     state.prevStatus.set(key, now);
   }
@@ -322,12 +327,22 @@ async function fetchAdsb() {
       const sample = {
         cs: (ac.flight || "").trim(), reg: ac.r || "—", type: ac.t || "—",
         alt: ac.alt_baro, gs: ac.gs ?? null, dist, grounded, ts: Date.now(),
+        lat: ac.lat, lon: ac.lon, track: ac.track ?? ac.true_heading ?? 0,
       };
       state.aircraft.set(f.flight, sample);
+      // Alert once when the aircraft turns final (inside 12 km, still flying).
+      if (!grounded && dist < 12 && (ac.gs ?? 0) > 60) {
+        const mins = Math.max(2, Math.round((dist / ((ac.gs || 200) * 1.852)) * 60 + 3));
+        notify(`${ataKey(f)}|final`, `${f.flight} on final approach`,
+          `${f.city} to YTZ - about ${mins} min to touchdown`);
+      }
       // Touchdown detection: on the ground within ~4.5 km of the field.
       if (grounded && dist <= 4.5 && !state.ata[ataKey(f)]) {
         state.ata[ataKey(f)] = { t: Date.now(), src: "radar" };
         saveAta();
+        state.justLanded.set(f.flight, Date.now());
+        notify(`${ataKey(f)}|landed`, `${f.flight} landed at YTZ`,
+          `Touched down at ${fmt12FromDate(new Date())} from ${f.city}`);
       }
     }
     state.adsbFetchedAt = Date.now();
@@ -335,6 +350,7 @@ async function fetchAdsb() {
   } catch (e) {
     state.adsbError = String(e.message || e);
   }
+  updateMap();
   render();
 }
 
@@ -439,6 +455,8 @@ function render() {
     const rowCls = ["flight-row"];
     if (v.statusCls === "landed") rowCls.push("landed");
     if (v.statusCls === "cancelled") rowCls.push("cancelled");
+    const jl = state.justLanded.get(f.flight);
+    if (jl && Date.now() - jl < 8_000) rowCls.push("flash");
     html += `
 <tr class="${rowCls.join(" ")}" data-flight="${esc(f.flight)}">
   <td class="sched">${v.schedTxt}</td>
@@ -516,6 +534,116 @@ function detailRow(f, v) {
   return `<tr class="detail"><td colspan="5">${tele}</td></tr>`;
 }
 
+/* ---------------- landing alerts ---------------- */
+const ALERT_KEY = "ytz-alerts-on";
+const NOTIFIED_KEY = "ytz-notified-v1";
+let notified;
+try { notified = new Set(JSON.parse(localStorage.getItem(NOTIFIED_KEY) || "[]")); } catch { notified = new Set(); }
+
+function alertsEnabled() {
+  return localStorage.getItem(ALERT_KEY) === "1" &&
+    "Notification" in window && Notification.permission === "granted";
+}
+
+function notify(key, title, body) {
+  if (!alertsEnabled() || notified.has(key)) return;
+  notified.add(key);
+  try { localStorage.setItem(NOTIFIED_KEY, JSON.stringify([...notified].slice(-300))); } catch {}
+  const opts = { body, icon: "icon-192.png", badge: "icon-192.png", tag: key };
+  // Android Chrome only allows notifications through the service worker.
+  if (navigator.serviceWorker && navigator.serviceWorker.ready) {
+    navigator.serviceWorker.ready
+      .then((reg) => reg.showNotification(title, opts))
+      .catch(() => { try { new Notification(title, opts); } catch {} });
+  } else {
+    try { new Notification(title, opts); } catch {}
+  }
+}
+
+function refreshAlertsBtn() {
+  const b = $("alertsBtn");
+  const on = alertsEnabled();
+  b.classList.toggle("on", on);
+  b.textContent = on ? "🔔 Alerts on" : "🔕 Alerts";
+}
+
+async function toggleAlerts() {
+  if (!("Notification" in window)) { $("alertsBtn").textContent = "Alerts unsupported"; return; }
+  if (alertsEnabled()) {
+    localStorage.setItem(ALERT_KEY, "0");
+  } else {
+    const p = await Notification.requestPermission();
+    if (p === "granted") {
+      localStorage.setItem(ALERT_KEY, "1");
+      notify(`welcome|${Date.now()}`, "Landing alerts on",
+        "You'll be pinged when a flight turns final and the moment it touches down.");
+    }
+  }
+  refreshAlertsBtn();
+}
+
+/* ---------------- live map ---------------- */
+const MAP_KEY = "ytz-map-open";
+let map = null;
+const mapMarkers = {};
+let lastMapKey = "";
+
+function initMap() {
+  if (map || typeof L === "undefined") return;
+  map = L.map("map", { zoomControl: true }).setView([YTZ.lat, YTZ.lon], 8);
+  L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
+    attribution: "&copy; OpenStreetMap &copy; CARTO", maxZoom: 12,
+  }).addTo(map);
+  L.circleMarker([YTZ.lat, YTZ.lon], { radius: 6, color: "#ffb52e", fillColor: "#ffb52e", fillOpacity: 1 })
+    .addTo(map).bindTooltip("YTZ · Billy Bishop");
+}
+
+function updateMap() {
+  if (!map || $("mapWrap").hidden) return;
+  const seen = new Set();
+  const pts = [[YTZ.lat, YTZ.lon]];
+  for (const f of state.flights) {
+    if (f.day !== "Today") continue;
+    const s = state.aircraft.get(f.flight);
+    if (!s || s.lat == null || s.grounded || Date.now() - s.ts > 120_000) continue;
+    seen.add(f.flight);
+    pts.push([s.lat, s.lon]);
+    const rot = Math.round((s.track || 0) - 45);
+    const icon = L.divIcon({
+      className: "",
+      html: `<div class="plane-ic ${f.airlineCls}" style="transform:rotate(${rot}deg)">✈</div>`,
+      iconSize: [26, 26], iconAnchor: [13, 13],
+    });
+    const tip = `${f.flight} · ${f.code} → YTZ · ${Math.round(s.dist)} km out`;
+    if (mapMarkers[f.flight]) {
+      mapMarkers[f.flight].setLatLng([s.lat, s.lon]);
+      mapMarkers[f.flight].setIcon(icon);
+      mapMarkers[f.flight].setTooltipContent(tip);
+    } else {
+      mapMarkers[f.flight] = L.marker([s.lat, s.lon], { icon }).addTo(map).bindTooltip(tip);
+    }
+  }
+  for (const k of Object.keys(mapMarkers)) {
+    if (!seen.has(k)) { map.removeLayer(mapMarkers[k]); delete mapMarkers[k]; }
+  }
+  // Re-frame only when the set of tracked planes changes, so user panning sticks.
+  const key = [...seen].sort().join(",");
+  if (key !== lastMapKey) {
+    lastMapKey = key;
+    if (pts.length > 1) map.fitBounds(pts, { padding: [28, 28], maxZoom: 9 });
+  }
+}
+
+function setMapOpen(open) {
+  try { localStorage.setItem(MAP_KEY, open ? "1" : "0"); } catch {}
+  $("mapWrap").hidden = !open;
+  $("mapBtn").classList.toggle("on", open);
+  if (open) {
+    initMap();
+    setTimeout(() => { if (map) { map.invalidateSize(); lastMapKey = ""; updateMap(); } }, 80);
+  }
+}
+
 /* ---------------- wiring ---------------- */
 function setTab(tab) {
   state.tab = tab;
@@ -526,6 +654,8 @@ function setTab(tab) {
 
 $("tabToday").addEventListener("click", () => setTab("Today"));
 $("tabTomorrow").addEventListener("click", () => setTab("Tomorrow"));
+$("alertsBtn").addEventListener("click", toggleAlerts);
+$("mapBtn").addEventListener("click", () => setMapOpen($("mapWrap").hidden));
 $("search").addEventListener("input", (e) => { state.search = e.target.value; render(); });
 $("rows").addEventListener("click", (e) => {
   if (e.target.closest("a")) return; // flight-number links go to FlightAware
@@ -542,10 +672,14 @@ $("clock").textContent = fmtClock(new Date());
 let adsbTimer = null;
 function nextAdsbDelay() {
   if (document.hidden) return ADSB_HIDDEN_INTERVAL_MS;
+  let delay = ADSB_BASE_MS;
   for (const s of state.aircraft.values()) {
-    if (Date.now() - s.ts < 120_000 && !s.grounded && s.dist < 80) return ADSB_FAST_MS;
+    if (Date.now() - s.ts < 120_000 && !s.grounded) {
+      if (s.dist < 25) return ADSB_ULTRA_MS;
+      if (s.dist < 80) delay = ADSB_FAST_MS;
+    }
   }
-  return ADSB_BASE_MS;
+  return delay;
 }
 function scheduleAdsb() {
   clearTimeout(adsbTimer);
@@ -573,6 +707,16 @@ setInterval(() => {
 
 /* Keep countdowns and "Xs ago" freshness text ticking. */
 setInterval(render, 5_000);
+
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("sw.js").catch(() => {});
+  });
+}
+
+refreshAlertsBtn();
+const mapPref = localStorage.getItem(MAP_KEY);
+setMapOpen(mapPref !== null ? mapPref === "1" : window.innerWidth > 860);
 
 paintCachedBoard();
 fetchBoard();

@@ -3,10 +3,22 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta name="description" content="Live U.S. arrivals board for Billy Bishop Toronto City Airport (YTZ) — real-time status, ETA and actual touchdown times.">
+<meta name="description" content="Live U.S. arrivals board for Billy Bishop Toronto City Airport (YTZ) — real-time countdowns to touchdown and radar-stamped actual arrival times.">
+<meta name="theme-color" content="#0b0e14">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <title>YTZ · U.S. Arrivals — Billy Bishop Live Board</title>
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛬</text></svg>">
-<link rel="stylesheet" href="style.css?v=7">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon-192.png" type="image/png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<link rel="preconnect" href="https://r.jina.ai" crossorigin>
+<link rel="preconnect" href="https://api.airplanes.live" crossorigin>
+<link rel="preconnect" href="https://unpkg.com" crossorigin>
+<link rel="preconnect" href="https://a.basemaps.cartocdn.com" crossorigin>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<link rel="stylesheet" href="style.css?v=8">
+<script defer src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script defer src="app.js?v=8"></script>
 </head>
 <body>
 
@@ -30,9 +42,13 @@
     <button class="tab active" id="tabToday" role="tab">Today</button>
     <button class="tab" id="tabTomorrow" role="tab">Tomorrow</button>
   </div>
-  <input type="search" id="search" class="search" placeholder="Search flight or city… (e.g. PD2720, EWR, Boston)" autocomplete="off">
+  <button class="chip-btn" id="alertsBtn" title="Get a notification when a flight is on final approach and when it lands">🔕 Alerts</button>
+  <button class="chip-btn" id="mapBtn" title="Show inbound aircraft on a live map">🗺 Map</button>
+  <input type="search" id="search" class="search" placeholder="Search flight or city…" autocomplete="off">
   <div class="freshness" id="freshness">connecting…</div>
 </div>
+
+<div class="map-wrap" id="mapWrap" hidden><div id="map"></div></div>
 
 <div class="board-wrap">
   <div class="banner" id="banner" hidden></div>
@@ -60,6 +76,5 @@
   </p>
 </footer>
 
-<script src="app.js?v=7"></script>
 </body>
 </html>
