@@ -2,7 +2,7 @@
 
 A zero-backend, auto-updating arrivals board for **Billy Bishop Toronto City Airport (YTZ)**, showing **U.S.-origin flights only** (Porter & Air Canada).
 
-**Live page:** https://mustafasyed13.github.io/ytz-arrivals/
+**Live page:** https://mustafasyed13.github.io/billy-bishop-arrivals/
 
 ## What it shows
 
