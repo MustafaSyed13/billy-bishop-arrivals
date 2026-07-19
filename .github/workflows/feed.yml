@@ -21,6 +21,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
+      - name: Fetch previous feed (carries original schedules forward)
+        run: |
+          git fetch origin data 2>/dev/null || true
+          git show origin/data:board.json > prev-board.json 2>/dev/null || echo "{}" > prev-board.json
       - name: Build feed
         run: node scripts/build-feed.mjs
       - name: Publish to data branch

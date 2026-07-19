@@ -195,7 +195,7 @@ function originInfo(originText) {
   return null; // not a U.S. origin
 }
 
-function buildFlight(day, time, flightNo, origin, status) {
+function buildFlight(day, time, flightNo, origin, status, sched) {
   const prefix = flightNo.slice(0, 2);
   const airline = AIRLINES[prefix];
   if (!airline) return null;                 // drops TS/other codeshare rows
@@ -203,6 +203,7 @@ function buildFlight(day, time, flightNo, origin, status) {
   if (!info) return null;                    // drops non-US origins
   return {
     day, time, flight: flightNo, origin, status: status.trim(),
+    schedHint: sched || null,
     airline: airline.name, airlineCls: airline.cls, callsigns: airline.callsigns,
     code: info.code, city: info.city, olat: info.lat, olon: info.lon,
   };
@@ -308,7 +309,7 @@ async function fetchFeed() {
 function applyFeed(j) {
   const t = Date.parse(j.fetchedAt) || 0;
   if (!t || t <= state.boardFetchedAt) return false;
-  const flights = j.arrivals.map((r) => buildFlight(r.day, r.time, r.flight, r.origin, r.status)).filter(Boolean);
+  const flights = j.arrivals.map((r) => buildFlight(r.day, r.time, r.flight, r.origin, r.status, r.sched)).filter(Boolean);
   applyBoard(flights);
   state.arrRaw = j.arrivals;
   trackCancellations(j.arrivals, state.prevArr, "arrival");
@@ -330,7 +331,7 @@ async function fetchBoard() {
   feedP.then((j) => { if (j && applyFeed(j)) render(); });
   try {
     const raw = await fetchViaProxies(`${BOARD_URL}?_=${Date.now()}`);
-    const flights = raw.map((r) => buildFlight(r.day, r.time, r.flight, r.origin, r.status)).filter(Boolean);
+    const flights = raw.map((r) => buildFlight(r.day, r.time, r.flight, r.origin, r.status, r.sched)).filter(Boolean);
     applyBoard(flights);
     state.arrRaw = raw;
     trackCancellations(raw, state.prevArr, "arrival");
@@ -371,7 +372,11 @@ try { schedStore = JSON.parse(localStorage.getItem(SCHED_KEY) || "{}"); } catch 
 function preserveSched(f) {
   const date = f.day === "Tomorrow" ? torontoDateKey(1) : torontoDateKey();
   const k = `${date}|${f.flight}`;
-  if (!schedStore[k]) {
+  // The feed's remembered schedule beats anything this device first saw,
+  // because the data robot captures Tomorrow's plan the evening before.
+  if (f.schedHint && (!schedStore[k] || schedStore[k].src !== "feed")) {
+    schedStore[k] = { t: f.schedHint, src: "feed" };
+  } else if (!schedStore[k]) {
     schedStore[k] = { t: f.time, src: f.day === "Tomorrow" ? "tomorrow_snapshot" : "first_seen" };
   }
   return schedStore[k];
@@ -539,7 +544,9 @@ function viewOf(f) {
 
   const v = {
     schedTxt: fmt12(f.sched || f.time),
-    schedSrc: f.schedSrc === "tomorrow_snapshot" ? "captured from yesterday's schedule" : "schedule as first published",
+    schedSrc: f.schedSrc === "feed" ? "original published schedule"
+      : f.schedSrc === "tomorrow_snapshot" ? "captured from yesterday's schedule"
+      : "schedule as first published",
     etaMain: fmt12(f.time), etaSub: "", etaLive: false,
     ataTxt: "—", ataNote: "", ataApprox: false,
     statusTxt: f.status, statusCls: "ontime",

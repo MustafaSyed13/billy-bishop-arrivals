@@ -38,21 +38,23 @@ td.ata{color:var(--green)}
 <h1>DAILY U.S. ARRIVALS SHEET <span id="date"></span></h1>
 <div class="sub" id="status">Loading today's flights…</div>
 <div class="btns">
-  <button id="copy3">📋 Copy FLIGHT · ORIGIN · ETA</button>
-  <button id="copyAll">📋 Copy all columns</button>
+  <button id="copy3">📋 Copy sheet (click the MONTH cell, then paste)</button>
+  <button id="copyAll">📋 Copy all (+ ATA &amp; PAX)</button>
   <button id="csv">⬇ Download CSV</button>
   <button onclick="location.reload()">↻ Refresh</button>
 </div>
 <table id="tbl">
-  <thead><tr><th>FLIGHT</th><th>ORIGIN</th><th>ETA</th><th>ATA</th><th>CREW</th><th>PAX (click to type)</th></tr></thead>
+  <thead><tr><th>AIRLINE</th><th>FLIGHT</th><th>ORIGIN</th><th>ETA</th><th>ATA</th><th>PAX (click to type)</th></tr></thead>
   <tbody id="rows"></tbody>
 </table>
 <p class="hint">
-  Flights come straight from the live board feed, already in chronological order.
-  Type the PAX counts from the paper sheet into the blue cells, then use a copy
-  button and paste into the workbook (row 4, column B). "Copy FLIGHT · ORIGIN · ETA"
-  is safe any time — it never touches your formula columns. ATA fills in
-  automatically for flights the radar has already seen land today (on this device).
+  Flights come straight from the live board feed, chronological by their
+  <b>original</b> scheduled ETA (delays don't shuffle or overwrite them).
+  Type the PAX counts from the paper into the blue cells, click a copy button,
+  then click the MONTH cell in the workbook and paste — AIRLINE, FLIGHT, ORIGIN
+  and ETA land in their own columns. The first button never touches your
+  formula columns. ATA fills in automatically for flights the radar has already
+  seen land today (on this device).
 </p>
 
 <script>
@@ -138,19 +140,22 @@ async function init() {
   table = rows
     .filter((r) => r.day === "Today" && /^(PD|AC)\d/.test(r.flight) && usCode(r.origin))
     .map((r) => ({
+      airline: r.flight.startsWith("PD") ? "Porter" : "AC",
       flight: r.flight.replace(/\D/g, ""),
       full: r.flight,
       origin: usCode(r.origin),
-      eta: pad(r.time),
+      // Original published schedule (remembered by the data robot), never the
+      // airport's mutated delay time.
+      eta: pad(r.sched || r.time),
       ata: r.status.toLowerCase() === "cancelled" ? "CXL"
-        : (storedAta(r.flight, r.time) || (r.status.toLowerCase() === "arrived" ? pad(r.time) : "")),
+        : (storedAta(r.flight, r.sched || r.time) || (r.status.toLowerCase() === "arrived" ? pad(r.time) : "")),
       crew: "4",
       pax: "",
     }))
     .sort((a, b) => mins(a.eta) - mins(b.eta));
   document.getElementById("rows").innerHTML = table.map((r, i) => `
-    <tr><td>${r.flight}</td><td>${r.origin}</td><td>${r.eta}</td><td class="ata">${r.ata}</td>
-    <td>${r.crew}</td><td class="pax" contenteditable="true" inputmode="numeric" data-i="${i}"></td></tr>`).join("");
+    <tr><td>${r.airline}</td><td>${r.flight}</td><td>${r.origin}</td><td>${r.eta}</td><td class="ata">${r.ata}</td>
+    <td class="pax" contenteditable="true" inputmode="numeric" data-i="${i}"></td></tr>`).join("");
   document.getElementById("status").textContent =
     `${table.length} U.S. arrivals today, chronological. Data as of ${new Date().toLocaleTimeString()}.`;
 }
@@ -177,13 +182,15 @@ async function toClipboard(text, btn) {
   setTimeout(() => { btn.textContent = old; btn.classList.remove("ok"); }, 2500);
 }
 document.getElementById("copy3").addEventListener("click", (e) =>
-  toClipboard(tsv(["flight", "origin", "eta"]), e.target));
+  toClipboard(tsv(["airline", "flight", "origin", "eta"]), e.target));
+// "Copy all" emits a 4 in the CREW position purely so ATA and PAX land in the
+// right workbook columns (E and G) when pasted at the MONTH cell.
 document.getElementById("copyAll").addEventListener("click", (e) =>
-  toClipboard(tsv(["flight", "origin", "eta", "ata", "crew", "pax"]), e.target));
+  toClipboard(tsv(["airline", "flight", "origin", "eta", "ata", "crew", "pax"]), e.target));
 document.getElementById("csv").addEventListener("click", () => {
   grabPax();
-  const csv = "FLIGHT,ORIGIN,ETA,ATA,CREW,PAX\n" +
-    table.map((r) => [r.flight, r.origin, r.eta, r.ata, r.crew, r.pax].join(",")).join("\n");
+  const csv = "AIRLINE,FLIGHT,ORIGIN,ETA,ATA,PAX\n" +
+    table.map((r) => [r.airline, r.flight, r.origin, r.eta, r.ata, r.pax].join(",")).join("\n");
   const a = document.createElement("a");
   a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
   a.download = `ytz-arrivals-${torontoDateKey()}.csv`;
