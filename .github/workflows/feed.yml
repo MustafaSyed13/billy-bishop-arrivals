@@ -33,8 +33,14 @@ jobs:
           git init -b data
           git config user.name "feed-bot"
           git config user.email "feed-bot@users.noreply.github.com"
-          git add board.json
+          REMOTE="https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          # Carry the daily history archive forward, then overwrite today's
+          # snapshot — each day's file converges to that day's final state.
+          git fetch "$REMOTE" data 2>/dev/null && git checkout FETCH_HEAD -- history 2>/dev/null || true
+          mkdir -p history
+          cp board.json "history/$(TZ=America/Toronto date +%F).json"
+          git add -A
           git commit -m "feed $(date -u +%FT%TZ)"
-          git push --force "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" data
+          git push --force "$REMOTE" data
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

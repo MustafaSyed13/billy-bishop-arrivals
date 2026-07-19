@@ -643,7 +643,7 @@ function render() {
     html += `
 <tr class="${rowCls.join(" ")}" data-flight="${esc(f.flight)}">
   <td class="sched" title="${esc(v.schedSrc)}">${v.schedTxt}</td>
-  <td class="flightno"><a href="https://www.flightaware.com/live/flight/${esc(faIdent(f))}" target="_blank" rel="noopener noreferrer" title="Track ${esc(f.flight)} on FlightAware">${esc(f.flight)}</a></td>
+  <td class="flightno"><a href="https://www.flightaware.com/live/flight/${esc(faIdent(f))}" data-fr24="https://www.flightradar24.com/data/flights/${esc(f.flight.toLowerCase())}" target="_blank" rel="noopener noreferrer" title="One click opens ${esc(f.flight)} on FlightAware AND Flightradar24">${esc(f.flight)}</a></td>
   <td class="airline"><svg class="airline-logo ${f.airlineCls}" role="img" aria-label="${esc(f.airline)}"><use href="#${f.airlineCls === "pd" ? "porter-logo" : "aircanada-logo"}"></use></svg></td>
   <td class="from"><span class="code">${esc(f.code)}</span><span class="city">${esc(f.city)}</span></td>
   <td class="eta${v.etaLive ? " live" : ""}${v.ataApprox ? " approx" : ""}${v.statusCls === "cancelled" ? " cxl" : ""}"><span class="eta-main">${esc(v.etaMain)}</span>${v.etaSub ? `<span class="eta-note">${esc(v.etaSub)}</span>` : ""}</td>
@@ -964,7 +964,13 @@ $("notifToggle").addEventListener("click", toggleAlerts);
 $("mapBtn").addEventListener("click", () => setMapOpen($("mapWrap").hidden));
 $("search").addEventListener("input", (e) => { state.search = e.target.value; render(); });
 $("rows").addEventListener("click", (e) => {
-  if (e.target.closest("a")) return; // flight-number links go to FlightAware
+  const a = e.target.closest("a");
+  if (a) {
+    // Office peace treaty: the anchor itself opens FlightAware, and this
+    // opens Flightradar24 alongside it in a second tab.
+    if (a.dataset.fr24) window.open(a.dataset.fr24, "_blank", "noopener");
+    return;
+  }
   const tr = e.target.closest("tr.flight-row");
   if (!tr) return;
   const id = tr.dataset.flight;
