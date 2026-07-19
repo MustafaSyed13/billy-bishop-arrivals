@@ -1010,6 +1010,7 @@ document.addEventListener("visibilitychange", () => {
   if (!document.hidden) {
     fetchAdsb().then(scheduleAdsb);
     fetchBoard();
+    checkForUpdate();
   } else {
     scheduleAdsb();
   }
@@ -1025,6 +1026,30 @@ setInterval(() => {
     fetchBoard();
   }
 }, 60_000);
+
+/* ---------------- self-update ----------------
+   Open tabs check for a newer deployed version every 5 minutes (and whenever
+   the tab regains focus) and reload themselves once. No manual refreshing. */
+function runningVer() {
+  const s = document.querySelector('script[src*="app.js"]');
+  const m = s && s.src.match(/[?&]v=(\d+)/);
+  return m ? m[1] : "0";
+}
+
+async function checkForUpdate() {
+  try {
+    const res = await fetch(`index.html?upd=${Date.now()}`, { cache: "no-store" });
+    if (!res.ok) return;
+    const m = (await res.text()).match(/app\.js\?v=(\d+)/);
+    if (!m || m[1] === runningVer()) return;
+    // Reload once per discovered version (10 min cooldown guards against loops).
+    const prev = (sessionStorage.getItem("upd-attempt") || "").split("|");
+    if (prev[0] === m[1] && Date.now() - (+prev[1] || 0) < 10 * 60_000) return;
+    sessionStorage.setItem("upd-attempt", `${m[1]}|${Date.now()}`);
+    location.reload();
+  } catch {}
+}
+setInterval(checkForUpdate, 5 * 60_000);
 
 /* Keep countdowns and "Xs ago" freshness text ticking. */
 setInterval(render, 5_000);
