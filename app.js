@@ -433,15 +433,6 @@ async function fetchAdsb() {
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     const list = data.ac || [];
-    // Everything currently airborne in range, for the map's background layer.
-    state.allAir = list.filter((a) =>
-      a.lat != null && a.lon != null &&
-      a.alt_baro !== "ground" &&
-      !(typeof a.alt_baro === "number" && a.alt_baro < 300 && (a.gs ?? 999) < 50)
-    ).map((a) => ({
-      hex: a.hex, cs: (a.flight || "").trim(), lat: a.lat, lon: a.lon,
-      track: a.track ?? 0, type: a.t || "",
-    }));
     for (const f of state.flights) {
       if (f.day !== "Today") continue;
       const st = f.status.toLowerCase();
@@ -510,7 +501,12 @@ function viewOf(f) {
     ac: acFresh ? ac : null,
   };
 
-  if (st === "cancelled") { v.statusCls = "cancelled"; v.etaMain = "—"; v.etaSub = "cancelled"; return v; }
+  if (st === "cancelled") {
+    v.statusCls = "cancelled";
+    v.etaMain = "CANCELLED";
+    v.etaSub = `was ${fmt12(f.sched || f.time)}`;
+    return v;
+  }
 
   const landed = !!ata || st === "arrived";
 
@@ -593,7 +589,7 @@ function render() {
   <td class="flightno"><a href="https://www.flightaware.com/live/flight/${esc(faIdent(f, v))}" target="_blank" rel="noopener noreferrer" title="Track ${esc(f.flight)} on FlightAware">${esc(f.flight)}</a></td>
   <td class="airline"><svg class="airline-logo ${f.airlineCls}" role="img" aria-label="${esc(f.airline)}"><use href="#${f.airlineCls === "pd" ? "porter-logo" : "aircanada-logo"}"></use></svg></td>
   <td class="from"><span class="code">${esc(f.code)}</span><span class="city">${esc(f.city)}</span></td>
-  <td class="eta${v.etaLive ? " live" : ""}${v.ataApprox ? " approx" : ""}"><span class="eta-main">${esc(v.etaMain)}</span>${v.etaSub ? `<span class="eta-note">${esc(v.etaSub)}</span>` : ""}</td>
+  <td class="eta${v.etaLive ? " live" : ""}${v.ataApprox ? " approx" : ""}${v.statusCls === "cancelled" ? " cxl" : ""}"><span class="eta-main">${esc(v.etaMain)}</span>${v.etaSub ? `<span class="eta-note">${esc(v.etaSub)}</span>` : ""}</td>
 
 </tr>`;
     if (state.expanded.has(f.flight)) html += detailRow(f, v);
@@ -706,7 +702,7 @@ function detailRow(f, v) {
     } else if (st === "cancelled") {
       tele = "Flight cancelled.";
     } else {
-      tele = "Not yet visible on radar — the aircraft appears here once airborne and in range (~460 km).";
+      tele = "Not trackable right now — the aircraft has either already landed or hasn't taken off yet.";
     }
   }
   return `<tr class="detail"><td colspan="5">${tele}</td></tr>`;
@@ -838,44 +834,12 @@ function updateMap() {
   for (const k of Object.keys(mapMarkers)) {
     if (!seen.has(k)) { map.removeLayer(mapMarkers[k]); delete mapMarkers[k]; }
   }
-  drawOtherAircraft();
   drawFocusRoute();
   // Re-frame only when the set of tracked planes changes, so user panning sticks.
   const key = [...seen].sort().join(",") + (state.focus || "");
   if (key !== lastMapKey) {
     lastMapKey = key;
     if (!state.focus && pts.length > 1) map.fitBounds(pts, { padding: [28, 28], maxZoom: 9 });
-  }
-}
-
-/* Background layer: every other aircraft currently in the air within radar
-   range, small and grey. Grounded aircraft are excluded on purpose. */
-const otherMarkers = {};
-function drawOtherAircraft() {
-  const matchedHex = new Set();
-  for (const s of state.aircraft.values()) {
-    if (s.hex && Date.now() - s.ts < 120_000) matchedHex.add(s.hex);
-  }
-  const seen = new Set();
-  for (const a of (state.allAir || []).slice(0, 150)) {
-    if (!a.hex || matchedHex.has(a.hex)) continue;
-    seen.add(a.hex);
-    const icon = L.divIcon({
-      className: "",
-      html: `<svg class="plane-svg other" viewBox="0 0 24 24" style="transform:rotate(${Math.round(a.track)}deg)"><path d="${PLANE_PATH}"/></svg>`,
-      iconSize: [18, 18], iconAnchor: [9, 9],
-    });
-    const tip = `${a.cs || a.hex}${a.type ? " · " + a.type : ""}`;
-    if (otherMarkers[a.hex]) {
-      otherMarkers[a.hex].setLatLng([a.lat, a.lon]);
-      otherMarkers[a.hex].setIcon(icon);
-      otherMarkers[a.hex].setTooltipContent(tip);
-    } else {
-      otherMarkers[a.hex] = L.marker([a.lat, a.lon], { icon, interactive: true }).addTo(map).bindTooltip(tip);
-    }
-  }
-  for (const k of Object.keys(otherMarkers)) {
-    if (!seen.has(k)) { map.removeLayer(otherMarkers[k]); delete otherMarkers[k]; }
   }
 }
 
@@ -922,7 +886,8 @@ function setMapOpen(open) {
 /* ---------------- wiring ---------------- */
 function setTab(tab) {
   state.tab = tab;
-  // The alerts panel holds today's cancellations only — close it on Tomorrow.
+  // Alerts are a today-only feature: hide the button and panel on Tomorrow.
+  $("alertsBtn").hidden = tab === "Tomorrow";
   if (tab === "Tomorrow") $("alertsPanel").hidden = true;
   $("tabToday").classList.toggle("active", tab === "Today");
   $("tabTomorrow").classList.toggle("active", tab === "Tomorrow");

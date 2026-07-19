@@ -111,8 +111,6 @@ a:hover { text-decoration: underline; }
 .btn-badge { background: var(--red); color: #fff; border-radius: 9px; padding: 0 7px; font-size: 11px; margin-left: 4px; }
 .chip-btn.warn { border-color: rgba(255, 93, 93, .5); }
 .cxl-count { background: var(--red); color: #fff; border-radius: 10px; padding: 1px 9px; font-size: 11px; }
-.plane-svg.other { width: 18px; height: 18px; fill: #93a0b3; opacity: .85; }
-.plane-svg.other path { stroke: #fff; stroke-width: .5; }
 .cxl-list { padding: 0 14px 12px; display: flex; flex-direction: column; gap: 8px; }
 .cxl-item {
   display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
@@ -155,6 +153,9 @@ td.eta .eta-main { display: block; }
 td.eta.live .eta-main { color: var(--green); font-size: 17px; letter-spacing: .5px; }
 td.eta.approx .eta-main { color: var(--text-dim); font-weight: 500; }
 tr.flight-row.landed td.eta .eta-main { color: var(--green); }
+td.eta.cxl .eta-main { color: var(--red); font: 800 16px var(--sans); letter-spacing: 1.5px; }
+tr.flight-row.cancelled td { opacity: .55; }
+tr.flight-row.cancelled td.eta { opacity: 1; }
 td.eta .eta-note, td.ata .ata-note { display: block; font-size: 10px; color: var(--text-faint); font-family: var(--sans); margin-top: 2px; }
 td.ata { color: var(--green); font-weight: 600; }
 td.ata .approx { color: var(--text-dim); font-weight: 400; }
@@ -197,7 +198,8 @@ tr.detail td {
 .progress .ends { display: flex; justify-content: space-between; font: 600 10px var(--mono); color: var(--text-faint); margin-top: 5px; }
 
 .foot { padding: 14px 24px 22px; border-top: 1px solid var(--line); }
-.foot p { font-size: 11px; color: var(--text-faint); line-height: 1.6; max-width: 900px; }
+.foot .copyright { font: 700 13px var(--sans); letter-spacing: 1.5px; color: var(--text-dim); }
+.foot .credits { font-size: 10px; color: var(--text-faint); margin-top: 4px; }
 
 /* ---------- mobile: card layout ---------- */
 @media (max-width: 720px) {
