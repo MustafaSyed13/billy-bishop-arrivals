@@ -13,8 +13,8 @@
 <link rel="apple-touch-icon" href="icon-192.png">
 <link rel="preconnect" href="https://raw.githubusercontent.com" crossorigin>
 <link rel="preconnect" href="https://api.airplanes.live" crossorigin>
-<link rel="stylesheet" href="style.css?v=13">
-<script defer src="app.js?v=12"></script>
+<link rel="stylesheet" href="style.css?v=14">
+<script defer src="app.js?v=13"></script>
 </head>
 <body>
 
@@ -67,7 +67,7 @@
   <div class="clockbox">
     <div class="live-ind"><span class="dot" id="liveDot"></span><span id="liveLabel">LIVE</span></div>
     <div class="clock" id="clock">--:--:--</div>
-    <div class="clock-sub">Toronto local time</div>
+    <div class="clock-sub" id="clockSub">Toronto local time</div>
   </div>
 </header>
 
@@ -82,12 +82,17 @@
   <div class="freshness" id="freshness">connecting…</div>
 </div>
 
-<div class="map-wrap" id="mapWrap" hidden><div id="map"></div></div>
-
-<div class="cxl" id="cxl" data-empty="1">
-  <button class="cxl-head" id="cxlHead">⚠ Cancellations today <span class="cxl-count" id="cxlCount">0</span></button>
-  <div class="cxl-list" id="cxlList" hidden></div>
+<div class="alerts-panel" id="alertsPanel" hidden>
+  <div class="ap-row">
+    <span class="ap-label">Landing &amp; cancellation notifications</span>
+    <button class="chip-btn" id="notifToggle">🔕 Off</button>
+  </div>
+  <div class="ap-head">⚠ U.S. cancellations today <span class="cxl-count" id="cxlCount">0</span></div>
+  <div class="cxl-list" id="cxlList"></div>
+  <div class="ap-empty" id="cxlEmpty">No U.S. cancellations so far today.</div>
 </div>
+
+<div class="map-wrap" id="mapWrap" hidden><div id="map"></div></div>
 
 <div class="board-wrap">
   <div class="banner" id="banner" hidden></div>

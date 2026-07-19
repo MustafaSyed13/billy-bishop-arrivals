@@ -99,17 +99,20 @@ a:hover { text-decoration: underline; }
 }
 .plane-label::before { display: none; }
 
-/* ---------- cancellations panel ---------- */
-.cxl { margin: 0 24px 12px; border: 1px solid rgba(255, 93, 93, .45); background: #1c1113; border-radius: 10px; overflow: hidden; }
-.cxl[data-empty="1"] { border-color: var(--line); background: transparent; }
-.cxl-head {
-  width: 100%; text-align: left; background: none; border: none; cursor: pointer;
-  color: var(--red); font: 700 13px var(--sans); padding: 11px 14px;
-  display: flex; gap: 10px; align-items: center;
+/* ---------- alerts panel (notifications + cancellations) ---------- */
+.alerts-panel {
+  margin: 0 24px 12px; border: 1px solid var(--line); background: var(--bg-panel);
+  border-radius: 10px; padding: 12px 14px;
 }
-.cxl[data-empty="1"] .cxl-head { color: var(--text-faint); font-weight: 600; }
+.ap-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-bottom: 10px; border-bottom: 1px solid var(--line); margin-bottom: 10px; }
+.ap-label { font: 600 13px var(--sans); color: var(--text); }
+.ap-head { color: var(--red); font: 700 13px var(--sans); display: flex; gap: 10px; align-items: center; margin-bottom: 10px; }
+.ap-empty { color: var(--text-faint); font-size: 13px; }
+.btn-badge { background: var(--red); color: #fff; border-radius: 9px; padding: 0 7px; font-size: 11px; margin-left: 4px; }
+.chip-btn.warn { border-color: rgba(255, 93, 93, .5); }
 .cxl-count { background: var(--red); color: #fff; border-radius: 10px; padding: 1px 9px; font-size: 11px; }
-.cxl[data-empty="1"] .cxl-count { background: var(--line); color: var(--text-dim); }
+.plane-svg.other { width: 18px; height: 18px; fill: #93a0b3; opacity: .85; }
+.plane-svg.other path { stroke: #fff; stroke-width: .5; }
 .cxl-list { padding: 0 14px 12px; display: flex; flex-direction: column; gap: 8px; }
 .cxl-item {
   display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
@@ -207,7 +210,7 @@ tr.detail td {
   .freshness { flex-basis: 100%; text-align: left; margin-left: 0; }
   .map-wrap { margin: 0 10px 10px; }
   #map { height: 210px; }
-  .cxl { margin: 0 10px 10px; }
+  .alerts-panel { margin: 0 10px 10px; }
   .board-wrap { padding: 0 10px 20px; }
   .board { min-width: 0; }
   .board thead { display: none; }

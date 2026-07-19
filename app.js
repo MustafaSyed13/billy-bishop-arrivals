@@ -433,6 +433,15 @@ async function fetchAdsb() {
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     const list = data.ac || [];
+    // Everything currently airborne in range, for the map's background layer.
+    state.allAir = list.filter((a) =>
+      a.lat != null && a.lon != null &&
+      a.alt_baro !== "ground" &&
+      !(typeof a.alt_baro === "number" && a.alt_baro < 300 && (a.gs ?? 999) < 50)
+    ).map((a) => ({
+      hex: a.hex, cs: (a.flight || "").trim(), lat: a.lat, lon: a.lon,
+      track: a.track ?? 0, type: a.t || "",
+    }));
     for (const f of state.flights) {
       if (f.day !== "Today") continue;
       const st = f.status.toLowerCase();
@@ -444,7 +453,7 @@ async function fetchAdsb() {
         (typeof ac.alt_baro === "number" && ac.alt_baro < 400 && (ac.gs ?? 999) < 80);
       const sample = {
         cs: (ac.flight || "").trim(), reg: ac.r || "—", type: ac.t || "—",
-        alt: ac.alt_baro, gs: ac.gs ?? null, dist, grounded, ts: Date.now(),
+        hex: ac.hex, alt: ac.alt_baro, gs: ac.gs ?? null, dist, grounded, ts: Date.now(),
         lat: ac.lat, lon: ac.lon, track: ac.track ?? ac.true_heading ?? 0,
       };
       state.aircraft.set(f.flight, sample);
@@ -513,13 +522,13 @@ function viewOf(f) {
         v.ataTxt = fmt12FromDate(t);
         v.ataNote = "detected · ADS-B radar";
       } else {
-        v.ataTxt = `≈ ${fmt12FromDate(t)}`;
-        v.ataApprox = true; v.ataNote = "board update time";
+        v.ataTxt = fmt12FromDate(t);
+        v.ataApprox = true; v.ataNote = "airport board update";
       }
     } else {
       // Arrived before we started watching: the airport's time column holds
       // its latest (actual-ish) arrival time.
-      v.ataTxt = `≈ ${fmt12(f.time)}`;
+      v.ataTxt = fmt12(f.time);
       v.ataApprox = true; v.ataNote = "airport board";
     }
     v.etaMain = v.ataTxt;
@@ -620,25 +629,28 @@ function render() {
   renderCancellations();
 }
 
-/* All of today's cancelled flights, arrivals and departures, any airline. */
+/* Today's cancelled flights with a U.S. city on the other end — arrivals and
+   departures. Domestic (within-Canada) cancellations are excluded on purpose. */
 function renderCancellations() {
-  const cxl = $("cxl");
   const items = [];
   for (const r of state.arrRaw) {
-    if (r.day === "Today" && !r.flight.startsWith("TS") && r.status.toLowerCase() === "cancelled") {
+    if (r.day === "Today" && !r.flight.startsWith("TS") && r.status.toLowerCase() === "cancelled" && originInfo(r.origin)) {
       items.push({ ...r, kind: "ARRIVAL", prep: "from" });
     }
   }
   for (const r of state.depRaw) {
-    if (r.day === "Today" && !r.flight.startsWith("TS") && r.status.toLowerCase() === "cancelled") {
+    if (r.day === "Today" && !r.flight.startsWith("TS") && r.status.toLowerCase() === "cancelled" && originInfo(r.origin)) {
       items.push({ ...r, kind: "DEPARTURE", prep: "to" });
     }
   }
   items.sort((a, b) => minutesOfDay(a.time) - minutesOfDay(b.time));
-  cxl.dataset.empty = items.length ? "0" : "1";
   $("cxlCount").textContent = items.length;
+  $("cxlEmpty").hidden = !!items.length;
+  const btn = $("alertsBtn");
+  btn.innerHTML = `🔔 Alerts${items.length ? ` <span class="btn-badge">${items.length}</span>` : ""}`;
+  btn.classList.toggle("warn", items.length > 0);
   const list = $("cxlList");
-  list.hidden = !state.cxlOpen || !items.length;
+  list.hidden = !items.length;
   list.innerHTML = items.map((r) => {
     const cls = r.flight.startsWith("PD") ? "pd" : r.flight.startsWith("AC") ? "ac" : "";
     const logo = cls
@@ -682,11 +694,20 @@ function detailRow(f, v) {
 </div>`;
   } else {
     const st = f.status.toLowerCase();
-    tele = st === "arrived" || state.ata[ataKey(f)]
-      ? "Aircraft has landed — live tracking ended."
-      : st === "cancelled"
-        ? "Flight cancelled."
-        : "Not yet visible on radar — the aircraft appears here once airborne and in range (~460 km).";
+    if (st === "arrived" || state.ata[ataKey(f)]) {
+      let txt = `Landed at ${v.ataTxt} from ${esc(f.city)}.`;
+      // The same route usually turns around: surface the next departure there.
+      const nowMin = torontoMinutesNow();
+      const nd = state.depRaw.find((d) =>
+        d.day === "Today" && !d.flight.startsWith("TS") && d.origin === f.origin &&
+        !/^(departed|cancelled)$/i.test(d.status) && minutesOfDay(d.time) > nowMin - 10);
+      if (nd) txt += ` Next departure to ${esc(f.city)}: ${esc(nd.flight)} at ${fmt12(nd.time)} (${esc(nd.status)}).`;
+      tele = txt;
+    } else if (st === "cancelled") {
+      tele = "Flight cancelled.";
+    } else {
+      tele = "Not yet visible on radar — the aircraft appears here once airborne and in range (~460 km).";
+    }
   }
   return `<tr class="detail"><td colspan="5">${tele}</td></tr>`;
 }
@@ -718,14 +739,14 @@ function notify(key, title, body) {
 }
 
 function refreshAlertsBtn() {
-  const b = $("alertsBtn");
+  const b = $("notifToggle");
   const on = alertsEnabled();
   b.classList.toggle("on", on);
-  b.textContent = on ? "🔔 Alerts on" : "🔕 Alerts";
+  b.textContent = on ? "🔔 On" : "🔕 Off";
 }
 
 async function toggleAlerts() {
-  if (!("Notification" in window)) { $("alertsBtn").textContent = "Alerts unsupported"; return; }
+  if (!("Notification" in window)) { $("notifToggle").textContent = "Unsupported"; return; }
   if (alertsEnabled()) {
     localStorage.setItem(ALERT_KEY, "0");
   } else {
@@ -774,6 +795,9 @@ const PLANE_PATH = "M21 16v-2l-8-5V3.5c0-.83-.67-1.5-1.5-1.5S10 2.67 10 3.5V9l-8
 function initMap() {
   if (map || typeof L === "undefined") return;
   map = L.map("map", { zoomControl: true }).setView([YTZ.lat, YTZ.lon], 8);
+  // Keep the OSM/CARTO data credit (their tile terms require it) but drop the
+  // Leaflet prefix for a cleaner look.
+  map.attributionControl.setPrefix("");
   L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png", {
     attribution: "&copy; OpenStreetMap &copy; CARTO", maxZoom: 12,
   }).addTo(map);
@@ -814,12 +838,44 @@ function updateMap() {
   for (const k of Object.keys(mapMarkers)) {
     if (!seen.has(k)) { map.removeLayer(mapMarkers[k]); delete mapMarkers[k]; }
   }
+  drawOtherAircraft();
   drawFocusRoute();
   // Re-frame only when the set of tracked planes changes, so user panning sticks.
   const key = [...seen].sort().join(",") + (state.focus || "");
   if (key !== lastMapKey) {
     lastMapKey = key;
     if (!state.focus && pts.length > 1) map.fitBounds(pts, { padding: [28, 28], maxZoom: 9 });
+  }
+}
+
+/* Background layer: every other aircraft currently in the air within radar
+   range, small and grey. Grounded aircraft are excluded on purpose. */
+const otherMarkers = {};
+function drawOtherAircraft() {
+  const matchedHex = new Set();
+  for (const s of state.aircraft.values()) {
+    if (s.hex && Date.now() - s.ts < 120_000) matchedHex.add(s.hex);
+  }
+  const seen = new Set();
+  for (const a of (state.allAir || []).slice(0, 150)) {
+    if (!a.hex || matchedHex.has(a.hex)) continue;
+    seen.add(a.hex);
+    const icon = L.divIcon({
+      className: "",
+      html: `<svg class="plane-svg other" viewBox="0 0 24 24" style="transform:rotate(${Math.round(a.track)}deg)"><path d="${PLANE_PATH}"/></svg>`,
+      iconSize: [18, 18], iconAnchor: [9, 9],
+    });
+    const tip = `${a.cs || a.hex}${a.type ? " · " + a.type : ""}`;
+    if (otherMarkers[a.hex]) {
+      otherMarkers[a.hex].setLatLng([a.lat, a.lon]);
+      otherMarkers[a.hex].setIcon(icon);
+      otherMarkers[a.hex].setTooltipContent(tip);
+    } else {
+      otherMarkers[a.hex] = L.marker([a.lat, a.lon], { icon, interactive: true }).addTo(map).bindTooltip(tip);
+    }
+  }
+  for (const k of Object.keys(otherMarkers)) {
+    if (!seen.has(k)) { map.removeLayer(otherMarkers[k]); delete otherMarkers[k]; }
   }
 }
 
@@ -873,7 +929,11 @@ function setTab(tab) {
 
 $("tabToday").addEventListener("click", () => setTab("Today"));
 $("tabTomorrow").addEventListener("click", () => setTab("Tomorrow"));
-$("alertsBtn").addEventListener("click", toggleAlerts);
+$("alertsBtn").addEventListener("click", () => {
+  const p = $("alertsPanel");
+  p.hidden = !p.hidden;
+});
+$("notifToggle").addEventListener("click", toggleAlerts);
 $("mapBtn").addEventListener("click", () => setMapOpen($("mapWrap").hidden));
 $("search").addEventListener("input", (e) => { state.search = e.target.value; render(); });
 $("rows").addEventListener("click", (e) => {
@@ -899,13 +959,16 @@ $("rows").addEventListener("click", (e) => {
   render();
 });
 
-$("cxlHead").addEventListener("click", () => {
-  state.cxlOpen = !state.cxlOpen;
-  render();
-});
 
-setInterval(() => { $("clock").textContent = fmtClock(new Date()); }, 1000);
-$("clock").textContent = fmtClock(new Date());
+function tickClock() {
+  const now = new Date();
+  $("clock").textContent = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Toronto", hour: "numeric", minute: "2-digit", second: "2-digit", hour12: true,
+  }).format(now);
+  $("clockSub").textContent = `${fmtClock(now)} · Toronto local`;
+}
+setInterval(tickClock, 1000);
+tickClock();
 
 let adsbTimer = null;
 function nextAdsbDelay() {
@@ -921,7 +984,9 @@ function nextAdsbDelay() {
 }
 function scheduleAdsb() {
   clearTimeout(adsbTimer);
-  adsbTimer = setTimeout(() => fetchAdsb().then(scheduleAdsb), nextAdsbDelay());
+  // Small jitter so many viewers on one office IP don't fire in lockstep.
+  const jitter = 0.85 + Math.random() * 0.3;
+  adsbTimer = setTimeout(() => fetchAdsb().then(scheduleAdsb), Math.round(nextAdsbDelay() * jitter));
 }
 document.addEventListener("visibilitychange", () => {
   if (!document.hidden) {
@@ -954,7 +1019,7 @@ if ("serviceWorker" in navigator) {
 
 refreshAlertsBtn();
 const mapPref = localStorage.getItem(MAP_KEY);
-setMapOpen(mapPref !== null ? mapPref === "1" : window.innerWidth > 860);
+setMapOpen(mapPref !== null ? mapPref === "1" : true);
 
 paintCachedBoard();
 fetchBoard();
