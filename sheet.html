@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Daily Arrivals Sheet — YTZ</title>
+<link rel="icon" href="icon-192.png" type="image/png">
+<meta name="theme-color" content="#0b0e14">
+<style>
+:root {
+  --bg:#0b0e14; --panel:#121722; --line:#232c3f; --text:#e8edf6; --dim:#8a94a8;
+  --faint:#5a6478; --amber:#ffb52e; --green:#3ddc84; --cyan:#4cc3ff;
+  --mono:"SF Mono","Cascadia Code",Consolas,monospace;
+  --sans:-apple-system,"Segoe UI",Roboto,system-ui,sans-serif;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:var(--bg);color:var(--text);font-family:var(--sans);padding:24px;min-height:100vh}
+h1{font-size:18px;letter-spacing:1px}
+.sub{color:var(--dim);font-size:13px;margin:6px 0 18px}
+.btns{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:18px}
+button{background:var(--panel);border:1px solid var(--line);color:var(--text);font:600 13px var(--sans);
+  padding:10px 16px;border-radius:8px;cursor:pointer}
+button:hover{border-color:var(--amber);color:var(--amber)}
+button.ok{border-color:var(--green);color:var(--green)}
+table{border-collapse:collapse;min-width:520px}
+th{font:700 11px var(--sans);letter-spacing:2px;color:var(--dim);text-align:left;
+  padding:8px 14px;border-bottom:2px solid var(--line)}
+td{font:500 15px var(--mono);padding:9px 14px;border-bottom:1px solid var(--line)}
+td.pax{background:#18202f;min-width:70px;outline:none}
+td.pax:focus{background:#1e2a40;box-shadow:inset 0 0 0 1px var(--cyan)}
+td.ata{color:var(--green)}
+.hint{color:var(--faint);font-size:12px;margin-top:14px;max-width:640px;line-height:1.6}
+.err{color:#ff5d5d;padding:30px 0}
+@media print{body{background:#fff;color:#000}button,.hint,.sub{display:none}}
+</style>
+</head>
+<body>
+<h1>DAILY U.S. ARRIVALS SHEET <span id="date"></span></h1>
+<div class="sub" id="status">Loading today's flights…</div>
+<div class="btns">
+  <button id="copy3">📋 Copy FLIGHT · ORIGIN · ETA</button>
+  <button id="copyAll">📋 Copy all columns</button>
+  <button id="csv">⬇ Download CSV</button>
+  <button onclick="location.reload()">↻ Refresh</button>
+</div>
+<table id="tbl">
+  <thead><tr><th>FLIGHT</th><th>ORIGIN</th><th>ETA</th><th>ATA</th><th>CREW</th><th>PAX (click to type)</th></tr></thead>
+  <tbody id="rows"></tbody>
+</table>
+<p class="hint">
+  Flights come straight from the live board feed, already in chronological order.
+  Type the PAX counts from the paper sheet into the blue cells, then use a copy
+  button and paste into the workbook (row 4, column B). "Copy FLIGHT · ORIGIN · ETA"
+  is safe any time — it never touches your formula columns. ATA fills in
+  automatically for flights the radar has already seen land today (on this device).
+</p>
+
+<script>
+"use strict";
+const FEED = "https://raw.githubusercontent.com/MustafaSyed13/billy-bishop-arrivals/data/board.json";
+const BOARD = "https://www.billybishopairport.com/flights/arrivals/";
+
+const US_KEYS = ["new york-newark","newark","new york","boston","chicago o'hare","chicago-o'hare",
+  "chicago-midway","chicago midway","washington-dulles","washington","nashville","orlando","tampa",
+  "fort lauderdale","fort myers","west palm beach","myrtle beach"];
+const US_CODE = {"new york-newark":"EWR","newark":"EWR","new york":"LGA","boston":"BOS",
+  "chicago o'hare":"ORD","chicago-o'hare":"ORD","chicago-midway":"MDW","chicago midway":"MDW",
+  "washington-dulles":"IAD","washington":"DCA","nashville":"BNA","orlando":"MCO","tampa":"TPA",
+  "fort lauderdale":"FLL","fort myers":"RSW","west palm beach":"PBI","myrtle beach":"MYR"};
+const US_STATES = new Set(["AL","AK","AZ","AR","CA","CO","CT","DE","FL","GA","HI","ID","IL","IN",
+  "IA","KS","KY","LA","ME","MD","MA","MI","MN","MS","MO","MT","NE","NV","NH","NJ","NM","NY","NC",
+  "ND","OH","OK","OR","PA","RI","SC","SD","TN","TX","UT","VT","VA","WA","WV","WI","WY","DC"]);
+
+function usCode(origin) {
+  const lower = origin.trim().toLowerCase();
+  for (const k of US_KEYS) if (lower.startsWith(k)) return US_CODE[k];
+  const st = /,\s*([A-Z]{2})\s*$/.exec(origin.trim());
+  if (st && US_STATES.has(st[1])) return st[1];
+  return null;
+}
+
+function torontoDateKey() {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Toronto" }).format(new Date());
+}
+function mins(t) { const m = /^(\d{1,2}):(\d{2})$/.exec(t); return m ? +m[1] * 60 + +m[2] : 0; }
+function pad(t) { const m = /^(\d{1,2}):(\d{2})$/.exec(t); return m ? String(m[1]).padStart(2, "0") + ":" + m[2] : t; }
+
+/* Stored touchdown times from the live board (same origin, shared storage). */
+function storedAta(flight, time) {
+  try {
+    const store = JSON.parse(localStorage.getItem("ytz-ata-v1") || "{}");
+    const date = torontoDateKey();
+    const exact = store[`${date}|${flight}|${time}`] || store[`${date}|${flight}`];
+    if (exact) return fmtToronto(exact.t);
+    const hits = Object.keys(store).filter((k) => k.startsWith(`${date}|${flight}|`));
+    if (hits.length === 1) return fmtToronto(store[hits[0]].t);
+  } catch {}
+  return "";
+}
+function fmtToronto(epoch) {
+  return new Intl.DateTimeFormat("en-GB", {
+    timeZone: "America/Toronto", hour: "2-digit", minute: "2-digit", hour12: false,
+  }).format(new Date(epoch));
+}
+
+function parseHtmlRows(html) {
+  const rows = [];
+  const rowRe = /<tr[^>]*class=['"]item (Today|Tomorrow)['"][\s\S]*?<\/tr>/g;
+  const tdRe = /<td[^>]*>([\s\S]*?)<\/td>/g;
+  let rm;
+  while ((rm = rowRe.exec(html))) {
+    const tds = [];
+    let tm; tdRe.lastIndex = 0;
+    while ((tm = tdRe.exec(rm[0]))) tds.push(tm[1].replace(/<[^>]*>/g, "").trim());
+    if (tds.length >= 6) rows.push({ day: rm[1], time: tds[1], flight: tds[3], origin: tds[4], status: tds[5] });
+  }
+  return rows;
+}
+
+async function loadRows() {
+  try {
+    const res = await fetch(`${FEED}?t=${Math.floor(Date.now() / 120000)}`);
+    const j = await res.json();
+    if (j && Array.isArray(j.arrivals) && j.arrivals.length) return j.arrivals;
+  } catch {}
+  const res = await fetch(`https://r.jina.ai/${BOARD}?_=${Date.now()}`,
+    { headers: { "x-respond-with": "html", "x-engine": "direct" } });
+  return parseHtmlRows(await res.text());
+}
+
+let table = [];
+async function init() {
+  document.getElementById("date").textContent = "· " + new Intl.DateTimeFormat("en-US",
+    { timeZone: "America/Toronto", weekday: "short", month: "short", day: "numeric", year: "numeric" }).format(new Date());
+  let rows;
+  try { rows = await loadRows(); }
+  catch { document.getElementById("status").innerHTML = '<span class="err">Could not load flight data — check connection and refresh.</span>'; return; }
+  table = rows
+    .filter((r) => r.day === "Today" && /^(PD|AC)\d/.test(r.flight) && usCode(r.origin))
+    .map((r) => ({
+      flight: r.flight.replace(/\D/g, ""),
+      full: r.flight,
+      origin: usCode(r.origin),
+      eta: pad(r.time),
+      ata: r.status.toLowerCase() === "cancelled" ? "CXL"
+        : (storedAta(r.flight, r.time) || (r.status.toLowerCase() === "arrived" ? pad(r.time) : "")),
+      crew: "4",
+      pax: "",
+    }))
+    .sort((a, b) => mins(a.eta) - mins(b.eta));
+  document.getElementById("rows").innerHTML = table.map((r, i) => `
+    <tr><td>${r.flight}</td><td>${r.origin}</td><td>${r.eta}</td><td class="ata">${r.ata}</td>
+    <td>${r.crew}</td><td class="pax" contenteditable="true" inputmode="numeric" data-i="${i}"></td></tr>`).join("");
+  document.getElementById("status").textContent =
+    `${table.length} U.S. arrivals today, chronological. Data as of ${new Date().toLocaleTimeString()}.`;
+}
+
+function grabPax() {
+  document.querySelectorAll("td.pax").forEach((td) => {
+    table[+td.dataset.i].pax = td.textContent.replace(/\D/g, "");
+  });
+}
+function tsv(cols) {
+  grabPax();
+  return table.map((r) => cols.map((c) => r[c]).join("\t")).join("\n");
+}
+async function toClipboard(text, btn) {
+  try { await navigator.clipboard.writeText(text); }
+  catch {
+    const ta = document.createElement("textarea");
+    ta.value = text; document.body.appendChild(ta); ta.select();
+    document.execCommand("copy"); ta.remove();
+  }
+  const old = btn.textContent;
+  btn.textContent = "✓ Copied — paste into Excel";
+  btn.classList.add("ok");
+  setTimeout(() => { btn.textContent = old; btn.classList.remove("ok"); }, 2500);
+}
+document.getElementById("copy3").addEventListener("click", (e) =>
+  toClipboard(tsv(["flight", "origin", "eta"]), e.target));
+document.getElementById("copyAll").addEventListener("click", (e) =>
+  toClipboard(tsv(["flight", "origin", "eta", "ata", "crew", "pax"]), e.target));
+document.getElementById("csv").addEventListener("click", () => {
+  grabPax();
+  const csv = "FLIGHT,ORIGIN,ETA,ATA,CREW,PAX\n" +
+    table.map((r) => [r.flight, r.origin, r.eta, r.ata, r.crew, r.pax].join(",")).join("\n");
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+  a.download = `ytz-arrivals-${torontoDateKey()}.csv`;
+  a.click();
+});
+init();
+</script>
+</body>
+</html>

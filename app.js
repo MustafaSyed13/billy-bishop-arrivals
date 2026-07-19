@@ -176,7 +176,9 @@ function saveAta() {
 }
 function ataKey(f) {
   const date = f.day === "Tomorrow" ? torontoDateKey(1) : torontoDateKey();
-  return `${date}|${f.flight}`;
+  // Includes the preserved schedule so the same flight number flying twice in
+  // one day (e.g. morning and afternoon PD2120) gets separate landing records.
+  return `${date}|${f.flight}|${f.sched || f.time}`;
 }
 
 /* ---------------- board parsing ---------------- */

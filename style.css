@@ -75,6 +75,7 @@ a:hover { text-decoration: underline; }
   white-space: nowrap; flex: none;
 }
 .chip-btn:hover { border-color: var(--text-faint); color: var(--text); }
+a.chip-btn { text-decoration: none; display: inline-flex; align-items: center; }
 .chip-btn.on { color: #14100a; background: var(--green); border-color: var(--green); }
 
 /* ---------- live map (light theme) ---------- */
