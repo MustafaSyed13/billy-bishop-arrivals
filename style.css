@@ -213,15 +213,19 @@ tr.detail td {
   .board thead { display: none; }
   .board, .board tbody { display: block; }
   tr.flight-row {
-    display: grid; grid-template-columns: 1fr auto; grid-template-rows: auto auto;
+    display: grid; grid-template-columns: 1fr auto; grid-template-rows: auto auto auto;
     column-gap: 12px; row-gap: 2px; padding: 12px 8px;
     border-bottom: 1px solid var(--line);
   }
   tr.flight-row td { display: block; padding: 0; border: 0; background: none !important; font-size: 14px; }
-  tr.flight-row td.sched, tr.flight-row td.airline { display: none; }
   tr.flight-row td.flightno { grid-column: 1; grid-row: 1; font-size: 17px; }
   tr.flight-row td.from { grid-column: 1; grid-row: 2; }
   td.from .city { font-size: 12px; }
+  tr.flight-row td.sched { grid-column: 1; grid-row: 3; font-size: 11px; color: var(--text-faint); margin-top: 3px; }
+  tr.flight-row td.sched::before { content: "sched "; font-family: var(--sans); letter-spacing: 1px; }
+  tr.flight-row td.airline { grid-column: 2; grid-row: 3; text-align: right; align-self: end; }
+  .airline-logo.pd { width: 44px; height: 15px; }
+  .airline-logo.ac { width: 70px; height: 10px; }
   tr.flight-row td.eta { grid-column: 2; grid-row: 1 / span 2; text-align: right; align-self: center; }
   td.eta.live .eta-main { font-size: 19px; }
   tr.detail { display: block; }

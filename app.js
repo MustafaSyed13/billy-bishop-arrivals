@@ -314,7 +314,38 @@ async function fetchDeps() {
   render();
 }
 
+/* The airport's time cell mutates into the new/estimated time when a flight
+   is delayed. Preserve the first schedule we ever saw for each flight+date so
+   the Sched column stays the original plan (provenance: first_seen, or
+   tomorrow_snapshot when we captured it the day before). */
+const SCHED_KEY = "ytz-sched-v1";
+let schedStore;
+try { schedStore = JSON.parse(localStorage.getItem(SCHED_KEY) || "{}"); } catch { schedStore = {}; }
+
+function preserveSched(f) {
+  const date = f.day === "Tomorrow" ? torontoDateKey(1) : torontoDateKey();
+  const k = `${date}|${f.flight}`;
+  if (!schedStore[k]) {
+    schedStore[k] = { t: f.time, src: f.day === "Tomorrow" ? "tomorrow_snapshot" : "first_seen" };
+  }
+  return schedStore[k];
+}
+
+function pruneSchedStore() {
+  const keep = new Set([torontoDateKey(), torontoDateKey(1)]);
+  for (const k of Object.keys(schedStore)) {
+    if (!keep.has(k.split("|")[0])) delete schedStore[k];
+  }
+  try { localStorage.setItem(SCHED_KEY, JSON.stringify(schedStore)); } catch {}
+}
+
 function applyBoard(flights) {
+  for (const f of flights) {
+    const s = preserveSched(f);
+    f.sched = s.t;
+    f.schedSrc = s.src;
+  }
+  pruneSchedStore();
   for (const f of flights) {
     const key = `${f.flight}|${f.day}`;
     const prev = state.prevStatus.get(key);
@@ -420,7 +451,8 @@ function viewOf(f) {
   const acFresh = ac && Date.now() - ac.ts < 90_000;
 
   const v = {
-    schedTxt: fmt12(f.time),
+    schedTxt: fmt12(f.sched || f.time),
+    schedSrc: f.schedSrc === "tomorrow_snapshot" ? "captured from yesterday's schedule" : "schedule as first published",
     etaMain: fmt12(f.time), etaSub: "", etaLive: false,
     ataTxt: "—", ataNote: "", ataApprox: false,
     statusTxt: f.status, statusCls: "ontime",
@@ -437,7 +469,7 @@ function viewOf(f) {
       const t = new Date(ata.t);
       if (ata.src === "radar") {
         v.ataTxt = fmt12FromDate(t);
-        v.ataNote = "touchdown · live radar";
+        v.ataNote = "detected · ADS-B radar";
       } else {
         v.ataTxt = `≈ ${fmt12FromDate(t)}`;
         v.ataApprox = true; v.ataNote = "board update time";
@@ -459,17 +491,19 @@ function viewOf(f) {
   if (acFresh && !ac.grounded && ac.gs > 40) {
     // Predicted touchdown from the live position: distance over ground speed
     // plus an approach-pattern buffer. Counts down between radar polls.
+    // Uncertainty bands are honest estimates by distance, not guarantees.
     const etaEpoch = ac.ts + ((ac.dist / (ac.gs * 1.852)) * 60 + 4) * 60_000;
     const remain = (etaEpoch - Date.now()) / 60_000;
+    const unc = ac.dist < 8 ? "±1 min" : ac.dist < 25 ? "±3 min" : ac.dist < 80 ? "±5 min" : "±10 min";
     v.etaMain = fmtDur(remain);
-    v.etaSub = `${fmt12FromDate(new Date(etaEpoch))} · live radar · ${Math.round(ac.dist)} km out`;
+    v.etaSub = `${fmt12FromDate(new Date(etaEpoch))} · live ${unc} · ${Math.round(ac.dist)} km`;
     v.etaLive = true;
     v.statusTxt = ac.dist < 12 ? "On final" : ac.dist < 60 ? "Approaching" : "In flight";
     v.statusCls = "inflight";
   } else {
     // No radar contact yet: count down to the airport's current estimate.
     const dm = minsUntilBoardTime(f);
-    v.etaSub = dm >= -2 ? fmtDur(dm) : "awaiting update";
+    v.etaSub = dm >= -2 ? `airport estimate · ${fmtDur(dm)}` : "airport estimate · awaiting update";
   }
   return v;
 }
@@ -504,8 +538,8 @@ function render() {
     if (jl && Date.now() - jl < 8_000) rowCls.push("flash");
     html += `
 <tr class="${rowCls.join(" ")}" data-flight="${esc(f.flight)}">
-  <td class="sched">${v.schedTxt}</td>
-  <td class="flightno"><a href="https://www.flightaware.com/live/flight/${esc(faIdent(f, v))}" target="_blank" rel="noopener" title="Track ${esc(f.flight)} on FlightAware">${esc(f.flight)}</a></td>
+  <td class="sched" title="${esc(v.schedSrc)}">${v.schedTxt}</td>
+  <td class="flightno"><a href="https://www.flightaware.com/live/flight/${esc(faIdent(f, v))}" target="_blank" rel="noopener noreferrer" title="Track ${esc(f.flight)} on FlightAware">${esc(f.flight)}</a></td>
   <td class="airline"><svg class="airline-logo ${f.airlineCls}" role="img" aria-label="${esc(f.airline)}"><use href="#${f.airlineCls === "pd" ? "porter-logo" : "aircanada-logo"}"></use></svg></td>
   <td class="from"><span class="code">${esc(f.code)}</span><span class="city">${esc(f.city)}</span></td>
   <td class="eta${v.etaLive ? " live" : ""}${v.ataApprox ? " approx" : ""}"><span class="eta-main">${esc(v.etaMain)}</span>${v.etaSub ? `<span class="eta-note">${esc(v.etaSub)}</span>` : ""}</td>
