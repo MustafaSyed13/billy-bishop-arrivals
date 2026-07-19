@@ -92,6 +92,8 @@ const state = {
   search: "",
   expanded: new Set(),
   proxyIdx: 0,
+  csCursor: 0,            // rotates long-range callsign lookups across flights
+  csTry: 0,               // alternates callsign spelling candidates
 };
 
 /* ---------------- utilities ---------------- */
@@ -427,6 +429,70 @@ function matchAircraft(flight, acList) {
   return best;
 }
 
+/* Record one radar sample for a matched flight and run the alert/touchdown
+   logic. Shared by the local point query and the long-range callsign lookups. */
+function ingestAircraft(f, ac) {
+  const dist = haversineKm({ lat: ac.lat, lon: ac.lon }, YTZ);
+  const grounded = ac.alt_baro === "ground" ||
+    (typeof ac.alt_baro === "number" && ac.alt_baro < 400 && (ac.gs ?? 999) < 80);
+  const sample = {
+    cs: (ac.flight || "").trim(), reg: ac.r || "—", type: ac.t || "—",
+    hex: ac.hex, alt: ac.alt_baro, gs: ac.gs ?? null, dist, grounded, ts: Date.now(),
+    lat: ac.lat, lon: ac.lon, track: ac.track ?? ac.true_heading ?? 0,
+  };
+  state.aircraft.set(f.flight, sample);
+  // Alert once when the aircraft turns final (inside 12 km, still flying).
+  if (!grounded && dist < 12 && (ac.gs ?? 0) > 60) {
+    const mins = Math.max(2, Math.round((dist / ((ac.gs || 200) * 1.852)) * 60 + 3));
+    notify(`${ataKey(f)}|final`, `${f.flight} on final approach`,
+      `${f.city} to YTZ - about ${mins} min to touchdown`);
+  }
+  // Touchdown detection: on the ground within ~4.5 km of the field. The
+  // distance gate also stops a pre-departure aircraft taxiing at its origin
+  // from ever being stamped as landed here.
+  if (grounded && dist <= 4.5 && !state.ata[ataKey(f)]) {
+    state.ata[ataKey(f)] = { t: Date.now(), src: "radar" };
+    saveAta();
+    state.justLanded.set(f.flight, Date.now());
+    notify(`${ataKey(f)}|landed`, `${f.flight} landed at YTZ`,
+      `Touched down at ${fmt12FromDate(new Date())} from ${f.city}`);
+  }
+}
+
+/* The point query only sees ~460 km around YTZ, but LGA/BOS/ORD are farther.
+   For flights due soon that aren't tracked yet, look their callsigns up
+   directly (two per poll, rotating) so tracking starts at takeoff. */
+async function lookupDistantFlights() {
+  const nowMin = torontoMinutesNow();
+  const pending = state.flights.filter((f) => {
+    if (f.day !== "Today") return false;
+    const st = f.status.toLowerCase();
+    if (st === "cancelled" || st === "arrived" || state.ata[ataKey(f)]) return false;
+    const s = state.aircraft.get(f.flight);
+    if (s && Date.now() - s.ts < 60_000) return false;
+    const dm = minutesOfDay(f.time) - nowMin;
+    return dm > -20 && dm < 160;
+  });
+  if (!pending.length) return;
+  for (let k = 0; k < Math.min(2, pending.length); k++) {
+    const f = pending[(state.csCursor + k) % pending.length];
+    const digits = f.flight.replace(/\D/g, "");
+    const cands = f.airlineCls === "pd"
+      ? ["PTR" + digits, "POE" + digits]
+      : ["JZA" + digits.slice(1), "JZA" + digits];
+    const cand = cands[state.csTry % cands.length];
+    try {
+      const r = await fetch(`https://api.airplanes.live/v2/callsign/${cand}`);
+      if (!r.ok) continue;
+      const d = await r.json();
+      const ac = matchAircraft(f, d.ac || []);
+      if (ac) ingestAircraft(f, ac);
+    } catch {}
+  }
+  state.csCursor += 2;
+  state.csTry++;
+}
+
 async function fetchAdsb() {
   try {
     const res = await fetch(ADSB_URL);
@@ -435,34 +501,11 @@ async function fetchAdsb() {
     const list = data.ac || [];
     for (const f of state.flights) {
       if (f.day !== "Today") continue;
-      const st = f.status.toLowerCase();
-      if (st === "cancelled") continue;
+      if (f.status.toLowerCase() === "cancelled") continue;
       const ac = matchAircraft(f, list);
-      if (!ac) continue;
-      const dist = haversineKm({ lat: ac.lat, lon: ac.lon }, YTZ);
-      const grounded = ac.alt_baro === "ground" ||
-        (typeof ac.alt_baro === "number" && ac.alt_baro < 400 && (ac.gs ?? 999) < 80);
-      const sample = {
-        cs: (ac.flight || "").trim(), reg: ac.r || "—", type: ac.t || "—",
-        hex: ac.hex, alt: ac.alt_baro, gs: ac.gs ?? null, dist, grounded, ts: Date.now(),
-        lat: ac.lat, lon: ac.lon, track: ac.track ?? ac.true_heading ?? 0,
-      };
-      state.aircraft.set(f.flight, sample);
-      // Alert once when the aircraft turns final (inside 12 km, still flying).
-      if (!grounded && dist < 12 && (ac.gs ?? 0) > 60) {
-        const mins = Math.max(2, Math.round((dist / ((ac.gs || 200) * 1.852)) * 60 + 3));
-        notify(`${ataKey(f)}|final`, `${f.flight} on final approach`,
-          `${f.city} to YTZ - about ${mins} min to touchdown`);
-      }
-      // Touchdown detection: on the ground within ~4.5 km of the field.
-      if (grounded && dist <= 4.5 && !state.ata[ataKey(f)]) {
-        state.ata[ataKey(f)] = { t: Date.now(), src: "radar" };
-        saveAta();
-        state.justLanded.set(f.flight, Date.now());
-        notify(`${ataKey(f)}|landed`, `${f.flight} landed at YTZ`,
-          `Touched down at ${fmt12FromDate(new Date())} from ${f.city}`);
-      }
+      if (ac) ingestAircraft(f, ac);
     }
+    await lookupDistantFlights();
     state.adsbFetchedAt = Date.now();
     state.adsbError = null;
   } catch (e) {
@@ -548,19 +591,24 @@ function viewOf(f) {
     v.statusTxt = ac.dist < 12 ? "On final" : ac.dist < 60 ? "Approaching" : "In flight";
     v.statusCls = "inflight";
   } else {
-    // No radar contact yet: count down to the airport's current estimate.
+    // No airborne radar contact: count down to the airport's estimate. If we
+    // can see the aircraft on the ground at its origin, say so.
     const dm = minsUntilBoardTime(f);
-    v.etaSub = dm >= -2 ? `airport estimate · ${fmtDur(dm)}` : "airport estimate · awaiting update";
+    if (acFresh && ac.grounded && ac.dist > 60) {
+      v.etaSub = `on the ground at ${f.code} · ${dm > 0 ? fmtDur(dm) : "departing soon"}`;
+    } else {
+      v.etaSub = dm >= -2 ? `airport estimate · ${fmtDur(dm)}` : "airport estimate · awaiting update";
+    }
   }
   return v;
 }
 
 /* ---------------- rendering ---------------- */
-/* FlightAware ident: the live radar callsign when we have one (most exact),
-   otherwise Porter flights track as POE + number, Air Canada (Jazz) as QK + number. */
-function faIdent(f, v) {
-  if (v.ac && v.ac.cs) return v.ac.cs.replace(/\s+/g, "");
-  return (f.airlineCls === "pd" ? "POE" : "QK") + f.flight.replace(/\D/g, "");
+/* FlightAware indexes these flights by ICAO designator + full flight number:
+   AC8531 -> JZA8531, PD2938 -> POE2938. The live radar callsign sometimes
+   drops a digit (JZA531) and 404s on FlightAware, so always build this form. */
+function faIdent(f) {
+  return (f.airlineCls === "pd" ? "POE" : "JZA") + f.flight.replace(/\D/g, "");
 }
 
 function render() {
@@ -586,7 +634,7 @@ function render() {
     html += `
 <tr class="${rowCls.join(" ")}" data-flight="${esc(f.flight)}">
   <td class="sched" title="${esc(v.schedSrc)}">${v.schedTxt}</td>
-  <td class="flightno"><a href="https://www.flightaware.com/live/flight/${esc(faIdent(f, v))}" target="_blank" rel="noopener noreferrer" title="Track ${esc(f.flight)} on FlightAware">${esc(f.flight)}</a></td>
+  <td class="flightno"><a href="https://www.flightaware.com/live/flight/${esc(faIdent(f))}" target="_blank" rel="noopener noreferrer" title="Track ${esc(f.flight)} on FlightAware">${esc(f.flight)}</a></td>
   <td class="airline"><svg class="airline-logo ${f.airlineCls}" role="img" aria-label="${esc(f.airline)}"><use href="#${f.airlineCls === "pd" ? "porter-logo" : "aircanada-logo"}"></use></svg></td>
   <td class="from"><span class="code">${esc(f.code)}</span><span class="city">${esc(f.city)}</span></td>
   <td class="eta${v.etaLive ? " live" : ""}${v.ataApprox ? " approx" : ""}${v.statusCls === "cancelled" ? " cxl" : ""}"><span class="eta-main">${esc(v.etaMain)}</span>${v.etaSub ? `<span class="eta-note">${esc(v.etaSub)}</span>` : ""}</td>
@@ -702,7 +750,10 @@ function detailRow(f, v) {
     } else if (st === "cancelled") {
       tele = "Flight cancelled.";
     } else {
-      tele = "Not trackable right now — the aircraft has either already landed or hasn't taken off yet.";
+      const dm = minsUntilBoardTime(f);
+      tele = dm > 5
+        ? `Hasn't taken off yet — estimated to land at YTZ at ${fmt12(f.time)} (${fmtDur(dm)}).`
+        : "Should be landing about now — waiting for the airport board to confirm.";
     }
   }
   return `<tr class="detail"><td colspan="5">${tele}</td></tr>`;
