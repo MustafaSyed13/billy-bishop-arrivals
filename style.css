@@ -79,7 +79,7 @@ a:hover { text-decoration: underline; }
 
 /* ---------- live map (light theme) ---------- */
 .map-wrap { margin: 0 24px 12px; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
-#map { height: 300px; background: #dde6ed; }
+#map { height: 450px; background: #dde6ed; }
 .leaflet-container { background: #dde6ed; font-family: var(--sans); }
 .plane-svg {
   width: 30px; height: 30px; display: block;
@@ -209,7 +209,7 @@ tr.detail td {
   .controls { padding: 10px 14px; }
   .freshness { flex-basis: 100%; text-align: left; margin-left: 0; }
   .map-wrap { margin: 0 10px 10px; }
-  #map { height: 210px; }
+  #map { height: 320px; }
   .alerts-panel { margin: 0 10px 10px; }
   .board-wrap { padding: 0 10px 20px; }
   .board { min-width: 0; }

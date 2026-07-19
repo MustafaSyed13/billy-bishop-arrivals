@@ -922,6 +922,8 @@ function setMapOpen(open) {
 /* ---------------- wiring ---------------- */
 function setTab(tab) {
   state.tab = tab;
+  // The alerts panel holds today's cancellations only — close it on Tomorrow.
+  if (tab === "Tomorrow") $("alertsPanel").hidden = true;
   $("tabToday").classList.toggle("active", tab === "Today");
   $("tabTomorrow").classList.toggle("active", tab === "Tomorrow");
   render();
