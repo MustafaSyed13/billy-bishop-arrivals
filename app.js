@@ -12,6 +12,10 @@ const YTZ = { lat: 43.6275, lon: -79.3962 };
 const BOARD_URL = "https://www.billybishopairport.com/flights/arrivals/";
 const DEPS_URL = "https://www.billybishopairport.com/flights/departures/";
 const DEPS_INTERVAL_MS = 90_000;
+/* Pre-parsed board JSON republished every ~5 min by a GitHub Action in this
+   repo. Served from GitHub's CDN with open CORS: instant, no proxies, and it
+   doesn't rate-limit when many viewers share one office IP. */
+const FEED_URL = "https://raw.githubusercontent.com/MustafaSyed13/billy-bishop-arrivals/data/board.json";
 const ADSB_URL = "https://api.airplanes.live/v2/point/43.6275/-79.3962/250";
 const BOARD_INTERVAL_MS = 60_000;
 const ADSB_BASE_MS = 15_000;      // radar poll cadence, nothing close by
@@ -253,7 +257,7 @@ async function fetchViaProxies(target) {
     const idx = (state.proxyIdx + i) % PROXIES.length;
     try {
       const ctrl = new AbortController();
-      const timer = setTimeout(() => ctrl.abort(), 12_000);
+      const timer = setTimeout(() => ctrl.abort(), 8_000);
       const p = PROXIES[idx];
       const res = await fetch(p.url(target), { signal: ctrl.signal, headers: p.headers || {} });
       clearTimeout(timer);
@@ -286,7 +290,40 @@ function trackCancellations(raw, prevMap, kind) {
   }
 }
 
+async function fetchFeed() {
+  // 2-minute buckets bust the raw CDN cache without a unique URL per request.
+  const bucket = Math.floor(Date.now() / 120_000);
+  const res = await fetch(`${FEED_URL}?t=${bucket}`);
+  if (!res.ok) throw new Error(`feed HTTP ${res.status}`);
+  const j = await res.json();
+  if (!j || !Array.isArray(j.arrivals) || !j.arrivals.length) throw new Error("bad feed");
+  return j;
+}
+
+/* Apply a feed snapshot unless we already hold fresher data. */
+function applyFeed(j) {
+  const t = Date.parse(j.fetchedAt) || 0;
+  if (!t || t <= state.boardFetchedAt) return false;
+  const flights = j.arrivals.map((r) => buildFlight(r.day, r.time, r.flight, r.origin, r.status)).filter(Boolean);
+  applyBoard(flights);
+  state.arrRaw = j.arrivals;
+  trackCancellations(j.arrivals, state.prevArr, "arrival");
+  if (Array.isArray(j.departures) && j.departures.length) {
+    state.depRaw = j.departures;
+    trackCancellations(j.departures, state.prevDep, "departure");
+    state.depsFetchedAt = t;
+  }
+  state.boardFetchedAt = t;
+  state.boardError = null;
+  try { localStorage.setItem(BOARD_CACHE_KEY, JSON.stringify({ t, flights })); } catch {}
+  return true;
+}
+
 async function fetchBoard() {
+  // Feed first: paints in ~200 ms. The live scrape below is fresher but slow
+  // and rate-limited, so it upgrades the data in the background when it works.
+  const feedP = fetchFeed().catch(() => null);
+  feedP.then((j) => { if (j && applyFeed(j)) render(); });
   try {
     const raw = await fetchViaProxies(`${BOARD_URL}?_=${Date.now()}`);
     const flights = raw.map((r) => buildFlight(r.day, r.time, r.flight, r.origin, r.status)).filter(Boolean);
@@ -299,7 +336,12 @@ async function fetchBoard() {
       localStorage.setItem(BOARD_CACHE_KEY, JSON.stringify({ t: Date.now(), flights }));
     } catch {}
   } catch (e) {
-    state.boardError = String(e.message || e);
+    // Live scrape failed; if the feed covered us recently, that's not an error
+    // worth alarming the user about.
+    const j = await feedP;
+    if (!j && Date.now() - state.boardFetchedAt > 20 * 60_000) {
+      state.boardError = String(e.message || e);
+    }
   }
   render();
 }
@@ -699,6 +741,28 @@ async function toggleAlerts() {
 
 /* ---------------- live map ---------------- */
 const MAP_KEY = "ytz-map-open";
+/* Leaflet loads only when the map is opened, so a slow or filtered CDN can
+   never block the arrivals board from painting. */
+let leafletLoading = null;
+function loadLeaflet() {
+  if (typeof L !== "undefined") return Promise.resolve();
+  if (leafletLoading) return leafletLoading;
+  leafletLoading = new Promise((resolve, reject) => {
+    const css = document.createElement("link");
+    css.rel = "stylesheet";
+    css.href = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css";
+    css.crossOrigin = "";
+    document.head.appendChild(css);
+    const s = document.createElement("script");
+    s.src = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js";
+    s.crossOrigin = "";
+    s.onload = resolve;
+    s.onerror = () => { leafletLoading = null; reject(new Error("leaflet load failed")); };
+    document.head.appendChild(s);
+  });
+  return leafletLoading;
+}
+
 let map = null;
 const mapMarkers = {};
 let lastMapKey = "";
@@ -792,8 +856,10 @@ function setMapOpen(open) {
   $("mapWrap").hidden = !open;
   $("mapBtn").classList.toggle("on", open);
   if (open) {
-    initMap();
-    setTimeout(() => { if (map) { map.invalidateSize(); lastMapKey = ""; updateMap(); } }, 80);
+    loadLeaflet().then(() => {
+      initMap();
+      setTimeout(() => { if (map) { map.invalidateSize(); lastMapKey = ""; updateMap(); } }, 80);
+    }).catch(() => {}); // map is optional; the board must never depend on it
   }
 }
 
