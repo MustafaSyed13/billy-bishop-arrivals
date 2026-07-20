@@ -27,6 +27,9 @@ button.ok{border-color:var(--green);color:var(--green)}
 .btnlink:hover{border-color:var(--cyan)}
 td a{color:inherit;text-decoration:none;border-bottom:1px dashed var(--faint)}
 td a:hover{color:var(--cyan);border-bottom-color:var(--cyan)}
+td a.frb{font:700 9px var(--sans);color:var(--cyan);border:1px solid rgba(76,195,255,.4);
+  border-radius:4px;padding:2px 5px;margin-left:8px;vertical-align:middle}
+td a.frb:hover{background:rgba(76,195,255,.15)}
 table{border-collapse:collapse;min-width:520px}
 th{font:700 11px var(--sans);letter-spacing:2px;color:var(--dim);text-align:left;
   padding:8px 14px;border-bottom:2px solid var(--line)}
@@ -163,14 +166,10 @@ async function init() {
     const fa = (r.full.startsWith("PD") ? "POE" : "JZA") + r.flight;
     return `
     <tr><td>${r.airline}</td>
-    <td><a href="https://www.flightaware.com/live/flight/${fa}" data-fr24="https://www.flightradar24.com/data/flights/${r.full.toLowerCase()}" target="_blank" rel="noopener noreferrer" title="Opens FlightAware AND Flightradar24">${r.flight}</a></td>
+    <td><a href="https://www.flightaware.com/live/flight/${fa}" target="_blank" rel="noopener noreferrer" title="Track on FlightAware">${r.flight}</a><a class="frb" href="https://www.flightradar24.com/data/flights/${r.full.toLowerCase()}" target="_blank" rel="noopener noreferrer" title="Track on Flightradar24">FR24</a></td>
     <td>${r.origin}</td><td>${r.eta}</td><td class="ata">${r.ata}</td>
     <td class="pax" contenteditable="true" inputmode="numeric" data-i="${i}"></td></tr>`;
   }).join("");
-  document.getElementById("rows").onclick = (e) => {
-    const a = e.target.closest("a");
-    if (a && a.dataset.fr24) window.open(a.dataset.fr24, "_blank", "noopener");
-  };
   document.getElementById("status").textContent =
     `${table.length} U.S. arrivals today, chronological. Data as of ${new Date().toLocaleTimeString()}.`;
 }
@@ -184,7 +183,13 @@ function tsv(cols) {
   grabPax();
   return table.map((r) => cols.map((c) => r[c]).join("\t")).join("\n");
 }
+function bump(key) {
+  try { fetch(`https://abacus.jasoncameron.dev/hit/syedsgroup-ytz/${key}`, { keepalive: true }).catch(() => {}); } catch {}
+}
+bump("sheet-open");
+
 async function toClipboard(text, btn) {
+  bump("sheet-copy");
   try { await navigator.clipboard.writeText(text); }
   catch {
     const ta = document.createElement("textarea");

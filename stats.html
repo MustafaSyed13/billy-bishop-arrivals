@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex, nofollow">
+<title>Usage — SYED'S GROUP</title>
+<link rel="icon" href="icon-192.png" type="image/png">
+<meta name="theme-color" content="#0b0e14">
+<style>
+:root {
+  --bg:#0b0e14; --panel:#121722; --line:#232c3f; --text:#e8edf6; --dim:#8a94a8;
+  --faint:#5a6478; --amber:#ffb52e; --green:#3ddc84; --cyan:#4cc3ff;
+  --mono:"SF Mono","Cascadia Code",Consolas,monospace;
+  --sans:-apple-system,"Segoe UI",Roboto,system-ui,sans-serif;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:var(--bg);color:var(--text);font-family:var(--sans);padding:26px;min-height:100vh}
+h1{font-size:18px;letter-spacing:1.5px}
+.sub{color:var(--faint);font-size:12px;margin:6px 0 22px}
+.tiles{display:flex;gap:14px;flex-wrap:wrap;margin-bottom:26px}
+.tile{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px 22px;min-width:150px}
+.tile .n{font:700 30px var(--mono);color:var(--amber)}
+.tile .l{font-size:11px;letter-spacing:1.5px;color:var(--dim);margin-top:4px;text-transform:uppercase}
+h2{font-size:12px;letter-spacing:2px;color:var(--dim);text-transform:uppercase;margin:24px 0 12px}
+.chart{display:flex;align-items:flex-end;gap:8px;height:130px;padding:10px 0}
+.bar{flex:1;max-width:52px;background:linear-gradient(180deg,var(--cyan),#1c5d99);border-radius:4px 4px 0 0;position:relative;min-height:2px}
+.bar span{position:absolute;top:-20px;left:50%;transform:translateX(-50%);font:600 10px var(--mono);color:var(--text)}
+.bar label{position:absolute;bottom:-20px;left:50%;transform:translateX(-50%);font:500 9px var(--mono);color:var(--faint);white-space:nowrap}
+.feat{border-collapse:collapse;min-width:340px;margin-bottom:20px}
+.feat td{padding:9px 16px 9px 0;border-bottom:1px solid var(--line);font-size:14px}
+.feat td:last-child{font:700 15px var(--mono);color:var(--green);text-align:right}
+.foot{margin-top:34px;color:var(--faint);font-size:11px}
+a{color:var(--cyan)}
+</style>
+</head>
+<body>
+<h1>📊 USAGE — SYED'S GROUP YTZ BOARD</h1>
+<div class="sub" id="upd">Loading…</div>
+
+<div class="tiles">
+  <div class="tile"><div class="n" id="t-opens">–</div><div class="l">Total opens</div></div>
+  <div class="tile"><div class="n" id="t-visitors">–</div><div class="l">Unique devices</div></div>
+  <div class="tile"><div class="n" id="t-today">–</div><div class="l">Opens today</div></div>
+</div>
+
+<h2>Opens · last 14 days</h2>
+<div class="chart" id="chart"></div>
+<div style="height:22px"></div>
+
+<h2>Feature usage (all time)</h2>
+<table class="feat">
+  <tr><td>🛬 Board opens</td><td id="f-opens">–</td></tr>
+  <tr><td>🗺 Map opened</td><td id="f-map">–</td></tr>
+  <tr><td>🔔 Alerts panel opened</td><td id="f-alerts">–</td></tr>
+  <tr><td>✈ Flight tracker links clicked</td><td id="f-link">–</td></tr>
+  <tr><td>📋 Daily sheet opened</td><td id="f-sheet">–</td></tr>
+  <tr><td>📋 Sheet copied to Excel</td><td id="f-copy">–</td></tr>
+</table>
+
+<p class="foot">Anonymous tallies only — no names, no locations, nothing personal. Auto-refreshes every minute.
+<a href="./">← Live board</a></p>
+
+<script>
+"use strict";
+const NS = "syedsgroup-ytz";
+async function count(key) {
+  try {
+    const r = await fetch(`https://abacus.jasoncameron.dev/get/${NS}/${key}`);
+    if (!r.ok) return 0;
+    const j = await r.json();
+    return j.value || 0;
+  } catch { return 0; }
+}
+function torontoDate(offset) {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Toronto" })
+    .format(new Date(Date.now() + offset * 86_400_000));
+}
+async function load() {
+  const [opens, visitors, map, alerts, link, sheetOpen, sheetCopy] = await Promise.all([
+    count("opens"), count("visitors"), count("feat-map"), count("feat-alerts"),
+    count("feat-flightlink"), count("sheet-open"), count("sheet-copy"),
+  ]);
+  const days = [];
+  for (let i = 13; i >= 0; i--) days.push(torontoDate(-i));
+  const daily = await Promise.all(days.map((d) => count(`opens-${d}`)));
+
+  document.getElementById("t-opens").textContent = opens.toLocaleString();
+  document.getElementById("t-visitors").textContent = visitors.toLocaleString();
+  document.getElementById("t-today").textContent = daily[13].toLocaleString();
+  document.getElementById("f-opens").textContent = opens.toLocaleString();
+  document.getElementById("f-map").textContent = map.toLocaleString();
+  document.getElementById("f-alerts").textContent = alerts.toLocaleString();
+  document.getElementById("f-link").textContent = link.toLocaleString();
+  document.getElementById("f-sheet").textContent = sheetOpen.toLocaleString();
+  document.getElementById("f-copy").textContent = sheetCopy.toLocaleString();
+
+  const max = Math.max(1, ...daily);
+  document.getElementById("chart").innerHTML = days.map((d, i) => `
+    <div class="bar" style="height:${Math.max(2, Math.round((daily[i] / max) * 100))}%">
+      <span>${daily[i] || ""}</span><label>${d.slice(5)}</label>
+    </div>`).join("");
+  document.getElementById("upd").textContent =
+    "Updated " + new Date().toLocaleTimeString() + " · counting since Jul 19, 2026";
+}
+load();
+setInterval(load, 60_000);
+</script>
+</body>
+</html>

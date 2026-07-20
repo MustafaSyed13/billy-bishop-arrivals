@@ -643,7 +643,7 @@ function render() {
     html += `
 <tr class="${rowCls.join(" ")}" data-flight="${esc(f.flight)}">
   <td class="sched" title="${esc(v.schedSrc)}">${v.schedTxt}</td>
-  <td class="flightno"><a href="https://www.flightaware.com/live/flight/${esc(faIdent(f))}" data-fr24="https://www.flightradar24.com/data/flights/${esc(f.flight.toLowerCase())}" target="_blank" rel="noopener noreferrer" title="One click opens ${esc(f.flight)} on FlightAware AND Flightradar24">${esc(f.flight)}</a></td>
+  <td class="flightno"><a href="https://www.flightaware.com/live/flight/${esc(faIdent(f))}" target="_blank" rel="noopener noreferrer" title="Track ${esc(f.flight)} on FlightAware">${esc(f.flight)}</a><a class="fr-badge" href="https://www.flightradar24.com/data/flights/${esc(f.flight.toLowerCase())}" target="_blank" rel="noopener noreferrer" title="Track ${esc(f.flight)} on Flightradar24">FR24</a></td>
   <td class="airline"><svg class="airline-logo ${f.airlineCls}" role="img" aria-label="${esc(f.airline)}"><use href="#${f.airlineCls === "pd" ? "porter-logo" : "aircanada-logo"}"></use></svg></td>
   <td class="from"><span class="code">${esc(f.code)}</span><span class="city">${esc(f.city)}</span></td>
   <td class="eta${v.etaLive ? " live" : ""}${v.ataApprox ? " approx" : ""}${v.statusCls === "cancelled" ? " cxl" : ""}"><span class="eta-main">${esc(v.etaMain)}</span>${v.etaSub ? `<span class="eta-note">${esc(v.etaSub)}</span>` : ""}</td>
@@ -958,19 +958,20 @@ $("tabToday").addEventListener("click", () => setTab("Today"));
 $("tabTomorrow").addEventListener("click", () => setTab("Tomorrow"));
 $("alertsBtn").addEventListener("click", () => {
   const p = $("alertsPanel");
+  if (p.hidden) bump("feat-alerts");
   p.hidden = !p.hidden;
 });
 $("notifToggle").addEventListener("click", toggleAlerts);
-$("mapBtn").addEventListener("click", () => setMapOpen($("mapWrap").hidden));
+$("sheetBtn").addEventListener("click", () => bump("feat-sheet"));
+$("mapBtn").addEventListener("click", () => {
+  const opening = $("mapWrap").hidden;
+  if (opening) bump("feat-map");
+  setMapOpen(opening);
+});
 $("search").addEventListener("input", (e) => { state.search = e.target.value; render(); });
 $("rows").addEventListener("click", (e) => {
   const a = e.target.closest("a");
-  if (a) {
-    // Office peace treaty: the anchor itself opens FlightAware, and this
-    // opens Flightradar24 alongside it in a second tab.
-    if (a.dataset.fr24) window.open(a.dataset.fr24, "_blank", "noopener");
-    return;
-  }
+  if (a) { bump("feat-flightlink"); return; } // tracker links navigate natively
   const tr = e.target.closest("tr.flight-row");
   if (!tr) return;
   const id = tr.dataset.flight;
@@ -1042,6 +1043,16 @@ setInterval(() => {
   }
 }, 60_000);
 
+/* ---------------- anonymous usage counters ----------------
+   Fire-and-forget hit counters (no personal data, just tallies) powering the
+   private stats.html dashboard. Failures are silently ignored. */
+const STATS_NS = "syedsgroup-ytz";
+function bump(key) {
+  try {
+    fetch(`https://abacus.jasoncameron.dev/hit/${STATS_NS}/${key}`, { keepalive: true }).catch(() => {});
+  } catch {}
+}
+
 /* ---------------- self-update ----------------
    Open tabs check for a newer deployed version every 5 minutes (and whenever
    the tab regains focus) and reload themselves once. No manual refreshing. */
@@ -1074,6 +1085,15 @@ if ("serviceWorker" in navigator) {
     navigator.serviceWorker.register("sw.js").catch(() => {});
   });
 }
+
+bump("opens");
+bump(`opens-${torontoDateKey()}`);
+try {
+  if (!localStorage.getItem("ytz-visitor")) {
+    localStorage.setItem("ytz-visitor", "1");
+    bump("visitors");
+  }
+} catch {}
 
 refreshAlertsBtn();
 const mapPref = localStorage.getItem(MAP_KEY);
