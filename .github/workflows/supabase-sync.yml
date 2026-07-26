@@ -1,0 +1,39 @@
+name: supabase-sync
+
+# Fills the Supabase database from the airport board + radar network.
+# Each run sweeps radar for ~4.4 minutes, so back-to-back runs give
+# effectively continuous ~15 second coverage. Free for public repos.
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Test the pipeline without writing to the database"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+# Never let two runs overlap — that would double-write positions.
+concurrency:
+  group: supabase-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Sync flights to Supabase
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          DRY_RUN: ${{ inputs.dry_run && '1' || '' }}
+        run: node scripts/sync-supabase.mjs
