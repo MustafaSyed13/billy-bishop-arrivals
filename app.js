@@ -72,6 +72,8 @@ const AIRLINES = {
 /* ---------------- state ---------------- */
 const state = {
   flights: [],            // parsed board rows (US only, PD/AC only)
+  todayHigh: 0,           // highest Today-row-count confirmed so far today (guards against truncated re-scrapes)
+  todayHighDate: null,
   arrRaw: [],             // every arrival row (all airlines) for the cancellations panel
   depRaw: [],             // every departure row
   prevArr: new Map(),     // cancellation flip detection, arrivals
@@ -391,6 +393,23 @@ function pruneSchedStore() {
 }
 
 function applyBoard(flights) {
+  // Two independent sources feed this function (the fast GitHub data feed and
+  // a live scrape via CORS proxies), and either can win the race on any given
+  // fetch. A proxy hiccup can return a truncated-but-parseable page, which
+  // must never be allowed to silently erase flights we already confirmed.
+  // Track the highest Today-row-count seen since Toronto's date last changed,
+  // and reject any batch that comes in suspiciously below it.
+  const nowDate = torontoDateKey();
+  if (state.todayHighDate !== nowDate) {
+    state.todayHighDate = nowDate;
+    state.todayHigh = 0;
+  }
+  const todayCount = flights.filter((f) => f.day === "Today").length;
+  if (state.todayHigh >= 4 && todayCount < state.todayHigh * 0.7) {
+    return; // looks like a partial parse; keep the fuller data already held
+  }
+  state.todayHigh = Math.max(state.todayHigh, todayCount);
+
   for (const f of flights) {
     const s = preserveSched(f);
     f.sched = s.t;
