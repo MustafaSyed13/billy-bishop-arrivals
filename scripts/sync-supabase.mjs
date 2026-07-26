@@ -223,7 +223,21 @@ const tracked = arrRows.filter((r) =>
   AIRLINES[r.flight.slice(0, 2)] && originInfo(r.origin) &&
   (r.day === "Today" || r.day === "Tomorrow"));
 
-const idOf = (r) => `${r.day === "Tomorrow" ? tomorrow : serviceDate}|${r.flight}|${r.time}`;
+/* A flight's id must NEVER change, or a delay would create a second row
+   instead of updating the first. So the id must not contain the time (the
+   airport rewrites that when a flight slips). Instead: date + flight number +
+   which occurrence it is that day, since a few flight numbers genuinely fly
+   twice in one day (e.g. PD2120 morning and afternoon). */
+const occurrence = new Map();
+const idMap = new Map();                      // board row -> stable id
+for (const r of tracked) {
+  const date = r.day === "Tomorrow" ? tomorrow : serviceDate;
+  const key = `${date}|${r.flight}`;
+  const n = occurrence.get(key) ?? 0;
+  occurrence.set(key, n + 1);
+  idMap.set(r, `${key}|${n}`);
+}
+const idOf = (r) => idMap.get(r);
 
 // 2. What do we already know? Never overwrite a recorded landing, and never
 //    lose the original schedule once the airport mutates its time cell.
@@ -232,10 +246,12 @@ const existing = await sbFetch(
 const known = new Map((existing || []).map((r) => [r.id, r]));
 
 // 3. Sync schedule + status for every tracked flight.
+const boardEvents = [];
 const baseRows = tracked.map((r) => {
   const id = idOf(r);
   const prev = known.get(id);
   const info = originInfo(r.origin);
+  const statusLower = r.status.toLowerCase();
   const row = {
     id,
     service_date: r.day === "Tomorrow" ? tomorrow : serviceDate,
@@ -248,10 +264,49 @@ const baseRows = tracked.map((r) => {
   };
   // First sighting wins for the original schedule; never touched again.
   if (!prev || !prev.sched_local) row.sched_local = r.time;
+
+  // FALLBACK LANDING: radar can miss a flight (transponder gap, out of
+  // coverage). If the board flips to Arrived and we have no radar touchdown,
+  // record the board's word instead — clearly labelled as the coarser source
+  // so the site can show it as approximate rather than pretending precision.
+  if (statusLower === "arrived" && prev && !prev.touchdown_at &&
+      prev.status && prev.status.toLowerCase() !== "arrived") {
+    const nowIso = new Date().toISOString();
+    row.board_arrived_at = nowIso;
+    row.touchdown_at = nowIso;
+    row.touchdown_source = "board";
+    row.touchdown_uncert_s = 300;          // board updates are coarse: +/- 5 min
+    boardEvents.push({ flight_id: id, event_type: "landed", detail: { source: "board" } });
+    console.log(`LANDED (board) ${r.flight}`);
+  }
+  if (statusLower === "cancelled" && prev && prev.status &&
+      prev.status.toLowerCase() !== "cancelled") {
+    boardEvents.push({ flight_id: id, event_type: "cancelled", detail: { was_due: r.time } });
+  }
   return row;
 });
 await sbUpsert("flights", baseRows);
+if (boardEvents.length) await sbInsert("flight_events", boardEvents);
 console.log(`synced ${baseRows.length} flight rows`);
+
+// 3b. Remove rows for today/tomorrow that are no longer on the airport board
+//     (schedule changed, or left over from an older id scheme). Keeps the
+//     board from showing phantom flights.
+const validIds = new Set(tracked.map(idOf));
+const stale = (existing || []).map((r) => r.id).filter((id) => !validIds.has(id));
+if (stale.length && !DRY_RUN) {
+  // One at a time: ids contain '|' and ':' which are awkward to batch safely
+  // inside a PostgREST in.() list, and stale rows are only ever a handful.
+  for (const id of stale) {
+    await sbFetch(`flights?id=eq.${encodeURIComponent(id)}`, {
+      method: "DELETE",
+      headers: { Prefer: "return=minimal" },
+    });
+  }
+  console.log(`removed ${stale.length} stale rows`);
+} else if (stale.length) {
+  console.log(`  [dry] would remove ${stale.length} stale rows`);
+}
 
 // 4. Sweep radar repeatedly for the rest of this run.
 const deadline = Date.now() + RUN_MS;
