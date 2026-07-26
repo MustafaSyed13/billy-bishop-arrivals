@@ -349,7 +349,12 @@ function flightFromDbRow(r, todayKey) {
 
 function applySupabase(payload) {
   const t = Date.parse(payload.generated_at) || 0;
-  if (!t || t <= state.boardFetchedAt) return false;
+  if (!t) return false;
+  // Older than what we already hold: ignore it.
+  if (t < state.boardFetchedAt) return false;
+  // Exactly what we already painted from cache: we're current, so report
+  // success rather than pointlessly falling through to the slower sources.
+  if (t === state.boardFetchedAt && state.flights.length) return true;
   const todayKey = torontoDateKey();
   const flights = payload.flights.map((r) => flightFromDbRow(r, todayKey)).filter(Boolean);
   if (!flights.length) return false;
