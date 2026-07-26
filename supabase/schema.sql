@@ -88,6 +88,12 @@ create table if not exists public.push_subscriptions (
 --  Reporting views — point Power BI at these
 -- =====================================================================
 
+-- Dropped first so this whole script stays safely re-runnable even when a
+-- view's column list changes (CREATE OR REPLACE VIEW cannot reorder columns).
+drop view if exists public.v_daily_summary;
+drop view if exists public.v_origin_summary;
+drop view if exists public.v_flight_performance cascade;
+
 -- Per-flight performance, in Toronto local time, ready for a dashboard.
 create or replace view public.v_flight_performance as
 select
@@ -97,15 +103,18 @@ select
   f.origin_code,
   f.origin_city,
   f.sched_local,
+  f.touchdown_at,                                                   -- raw UTC timestamp (use this for Power BI time intelligence)
   to_char(f.touchdown_at at time zone 'America/Toronto', 'HH24:MI') as touchdown_local,
   f.touchdown_source,
   f.status,
   f.pax_count,
   f.crew_count,
   case when f.status ilike 'cancelled' then true else false end as is_cancelled,
-  -- minutes late vs the original published schedule (negative = early)
+  -- minutes late vs the original published schedule (negative = early).
+  -- The regex guard keeps one malformed time value from breaking the view.
   case
-    when f.touchdown_at is null or f.sched_local is null then null
+    when f.touchdown_at is null then null
+    when f.sched_local is null or f.sched_local !~ '^\d{1,2}:\d{2}$' then null
     else round(extract(epoch from (
            (f.touchdown_at at time zone 'America/Toronto')
            - (f.service_date + f.sched_local::time)
@@ -162,6 +171,16 @@ create policy "public read events"      on public.flight_events      for select 
 create policy "public read board_state" on public.board_state        for select using (true);
 -- push_subscriptions intentionally has NO public select policy (contains
 -- device endpoints). Inserts happen through an edge function only.
+
+-- Views honour the caller's row-level security instead of the view owner's
+-- (the safe modern default), then are explicitly granted read access so the
+-- site works no matter how the project's "auto-expose tables" toggle is set.
+alter view public.v_flight_performance set (security_invoker = true);
+alter view public.v_daily_summary      set (security_invoker = true);
+alter view public.v_origin_summary     set (security_invoker = true);
+
+grant select on public.flights, public.flight_events, public.board_state to anon, authenticated;
+grant select on public.v_flight_performance, public.v_daily_summary, public.v_origin_summary to anon, authenticated;
 
 -- Keep updated_at honest.
 create or replace function public.touch_updated_at() returns trigger as $$
