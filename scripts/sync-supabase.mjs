@@ -120,13 +120,27 @@ async function sbFetch(path, opts = {}) {
 
 // upsert = update the row when this id already exists, otherwise insert it.
 // This is what makes re-running every few minutes safe: never duplicates.
+//
+// PostgREST requires every object in one batch to have exactly the same keys.
+// Our rows legitimately differ (only a landed flight carries touchdown_at), so
+// we group by key-signature and send one batch per shape. We deliberately do
+// NOT pad missing keys with null — that would blank out a landing time we had
+// already recorded.
 async function sbUpsert(table, rows) {
   if (!rows.length) return;
-  await sbFetch(table, {
-    method: "POST",
-    headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
-    body: JSON.stringify(rows),
-  });
+  const groups = new Map();
+  for (const row of rows) {
+    const sig = Object.keys(row).sort().join(",");
+    if (!groups.has(sig)) groups.set(sig, []);
+    groups.get(sig).push(row);
+  }
+  for (const batch of groups.values()) {
+    await sbFetch(table, {
+      method: "POST",
+      headers: { Prefer: "resolution=merge-duplicates,return=minimal" },
+      body: JSON.stringify(batch),
+    });
+  }
 }
 
 async function sbInsert(table, rows) {
