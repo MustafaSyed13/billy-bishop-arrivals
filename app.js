@@ -297,6 +297,97 @@ function trackCancellations(raw, prevMap, kind) {
   }
 }
 
+/* ---------------- Supabase: the canonical source ----------------
+   The backend decides landing times once, on a server, so every staff device
+   shows the SAME time instead of each browser judging independently. The
+   publishable key below is read-only by design (enforced by row-level security
+   in the database), which is why it is safe to ship in public page code. */
+const SUPA_URL = "https://crrrykfftzlzymmmawsn.supabase.co/rest/v1";
+const SUPA_KEY = "sb_publishable_b5eZTW04X5TiOo_vt190Rg_rRLkz3Gf";
+
+// Reverse lookup so a DB row's IATA code recovers the origin's coordinates
+// (needed to draw the route line on the map).
+const BY_CODE = {};
+for (const v of Object.values(US_AIRPORTS)) if (!BY_CODE[v.code]) BY_CODE[v.code] = v;
+
+async function fetchSupabase() {
+  const res = await fetch(`${SUPA_URL}/board_state?select=payload,updated_at`, {
+    headers: { apikey: SUPA_KEY },
+    signal: AbortSignal.timeout(8000),
+  });
+  if (!res.ok) throw new Error(`supabase HTTP ${res.status}`);
+  const rows = await res.json();
+  const payload = rows && rows[0] && rows[0].payload;
+  if (!payload || !Array.isArray(payload.flights) || !payload.flights.length) {
+    throw new Error("empty board_state");
+  }
+  return payload;
+}
+
+/* Turn one database row into the shape the rest of the board already speaks. */
+function flightFromDbRow(r, todayKey) {
+  const airline = AIRLINES[String(r.flight_no || "").slice(0, 2)];
+  if (!airline) return null;
+  const info = BY_CODE[r.origin_code] ||
+    { code: r.origin_code || "US", city: r.origin_city || "", lat: null, lon: null };
+  return {
+    day: r.service_date === todayKey ? "Today" : "Tomorrow",
+    time: r.est_local || r.sched_local || "",
+    flight: r.flight_no,
+    origin: r.origin_city || info.city,
+    status: (r.status || "").trim(),
+    schedHint: r.sched_local || null,
+    airline: airline.name,
+    airlineCls: airline.cls,
+    callsigns: airline.callsigns,
+    code: info.code,
+    city: info.city || r.origin_city || "",
+    olat: info.lat ?? null,
+    olon: info.lon ?? null,
+  };
+}
+
+function applySupabase(payload) {
+  const t = Date.parse(payload.generated_at) || 0;
+  if (!t || t <= state.boardFetchedAt) return false;
+  const todayKey = torontoDateKey();
+  const flights = payload.flights.map((r) => flightFromDbRow(r, todayKey)).filter(Boolean);
+  if (!flights.length) return false;
+
+  applyBoard(flights);   // preserves schedules, keeps the truncation guard active
+
+  // Adopt the server's landing times as authoritative. This is the whole point
+  // of the backend: one recorded touchdown, identical on every device.
+  for (const r of payload.flights) {
+    if (!r.touchdown_at) continue;
+    const f = flights.find((x) => x.flight === r.flight_no &&
+      x.day === (r.service_date === todayKey ? "Today" : "Tomorrow"));
+    if (!f) continue;
+    const ms = Date.parse(r.touchdown_at);
+    if (!ms) continue;
+    state.ata[ataKey(f)] = { t: ms, src: r.touchdown_source === "adsb" ? "radar" : "board" };
+  }
+  saveAta();
+
+  // Feed the cancellations panel the same way the old path did.
+  state.arrRaw = payload.flights.map((r) => ({
+    day: r.service_date === todayKey ? "Today" : "Tomorrow",
+    time: r.est_local || r.sched_local || "",
+    flight: r.flight_no, origin: r.origin_city || "", status: r.status || "",
+  }));
+  if (Array.isArray(payload.departure_cancellations)) {
+    state.depRaw = payload.departure_cancellations.map((c) => ({
+      day: "Today", time: c.time, flight: c.flight, origin: c.origin, status: "Cancelled",
+    }));
+    state.depsFetchedAt = t;
+  }
+
+  state.boardFetchedAt = t;
+  state.boardError = null;
+  try { localStorage.setItem(BOARD_CACHE_KEY, JSON.stringify({ t, flights })); } catch {}
+  return true;
+}
+
 async function fetchFeed() {
   // 2-minute buckets bust the raw CDN cache without a unique URL per request.
   const bucket = Math.floor(Date.now() / 120_000);
@@ -327,6 +418,16 @@ function applyFeed(j) {
 }
 
 async function fetchBoard() {
+  // Three sources, most authoritative first. Supabase carries the canonical
+  // landing times; the others exist so the board can never go blank if the
+  // backend is unreachable.
+  try {
+    if (applySupabase(await fetchSupabase())) {
+      render();
+      return;                          // canonical data in hand, nothing else needed
+    }
+  } catch (_) { /* fall through to the older paths */ }
+
   // Feed first: paints in ~200 ms. The live scrape below is fresher but slow
   // and rate-limited, so it upgrades the data in the background when it works.
   const feedP = fetchFeed().catch(() => null);
