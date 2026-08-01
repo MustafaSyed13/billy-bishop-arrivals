@@ -364,8 +364,13 @@ console.log(`synced ${baseRows.length} flight rows` +
 //     Applied regardless of source — a time that cannot be real is wrong even
 //     if radar reported it — but the window is wide enough (90 min early to
 //     8 h late) that genuine early or heavily delayed arrivals survive.
+// Scans EVERY recorded touchdown, not just today's — the rollover bug fired
+// once per night for several nights, so the damage spans past dates that a
+// today-only scan would never revisit.
+const repairScan = await sbFetch(
+  "flights?select=id,sched_local,touchdown_at,touchdown_source&touchdown_at=not.is.null");
 const repairs = [];
-for (const row of (existing || [])) {
+for (const row of (repairScan || [])) {
   if (!row.touchdown_at) continue;
   if (!touchdownPlausible(row.sched_local, row.touchdown_at)) {
     console.log(`repairing ${row.id} (${row.touchdown_source}) sched=${row.sched_local} td=${row.touchdown_at}`);
