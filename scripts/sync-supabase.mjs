@@ -71,6 +71,48 @@ function torontoDate(offsetDays = 0) {
     .format(new Date(Date.now() + offsetDays * 86_400_000));
 }
 
+/* Minutes since midnight, Toronto. Used for sanity-checking arrival claims. */
+function torontoMinutesNow() {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Toronto", hour: "2-digit", minute: "2-digit", hour12: false,
+  }).formatToParts(new Date());
+  const get = (t) => +parts.find((p) => p.type === t).value;
+  return (get("hour") % 24) * 60 + get("minute");
+}
+
+function schedMinutes(s) {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(String(s || ""));
+  return m ? +m[1] * 60 + +m[2] : null;
+}
+
+/* THE GUARD THAT WAS MISSING.
+   The airport's "Today" table does not roll over at Toronto midnight — for a
+   while after 00:00 it still lists the previous day's completed flights. That
+   caused yesterday's "Arrived" statuses to be copied onto today's brand-new
+   rows, stamping a dozen flights as landed at ~00:34 with delays of -500 to
+   -1100 minutes. A flight scheduled for 18:00 cannot have landed at 00:34.
+   So: an arrival is only believable once its scheduled time has essentially
+   arrived (we allow 30 minutes early). */
+function arrivalPlausible(schedLocal, nowMin) {
+  const s = schedMinutes(schedLocal);
+  if (s === null) return true;           // unknown schedule: don't block
+  return nowMin >= s - 30;
+}
+
+/* Is a recorded board-sourced touchdown believable for this schedule?
+   Rejects the midnight cluster while keeping genuinely late arrivals. */
+function touchdownPlausible(schedLocal, touchdownIso) {
+  const s = schedMinutes(schedLocal);
+  if (s === null || !touchdownIso) return true;
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Toronto", hour: "2-digit", minute: "2-digit", hour12: false,
+  }).formatToParts(new Date(touchdownIso));
+  const get = (t) => +parts.find((p) => p.type === t).value;
+  const td = (get("hour") % 24) * 60 + get("minute");
+  const diff = td - s;                   // minutes after schedule
+  return diff >= -90 && diff <= 8 * 60;  // 1.5 h early .. 8 h late
+}
+
 function haversineKm(a, b) {
   const R = 6371, d = Math.PI / 180;
   const dLat = (b.lat - a.lat) * d, dLon = (b.lon - a.lon) * d;
@@ -256,11 +298,13 @@ const idOf = (r) => idMap.get(r);
 // 2. What do we already know? Never overwrite a recorded landing, and never
 //    lose the original schedule once the airport mutates its time cell.
 const existing = await sbFetch(
-  `flights?select=id,sched_local,touchdown_at,status&service_date=in.(${serviceDate},${tomorrow})`);
+  `flights?select=id,sched_local,touchdown_at,touchdown_source,status&service_date=in.(${serviceDate},${tomorrow})`);
 const known = new Map((existing || []).map((r) => [r.id, r]));
 
 // 3. Sync schedule + status for every tracked flight.
 const boardEvents = [];
+const nowMin = torontoMinutesNow();
+let rolloverSkips = 0;
 const baseRows = tracked.map((r) => {
   const id = idOf(r);
   const prev = known.get(id);
@@ -279,11 +323,21 @@ const baseRows = tracked.map((r) => {
   // First sighting wins for the original schedule; never touched again.
   if (!prev || !prev.sched_local) row.sched_local = r.time;
 
+  // Reject an "Arrived"/"Departed" status for a flight whose scheduled time is
+  // still in the future — that only happens during the airport's post-midnight
+  // rollover, when its board still lists yesterday's flights under "Today".
+  const schedForCheck = row.sched_local || (prev && prev.sched_local) || r.time;
+  const believable = arrivalPlausible(schedForCheck, nowMin);
+  if (!believable && /^(arrived|departed)$/.test(statusLower)) {
+    row.status = prev && prev.status ? prev.status : "Scheduled";
+    rolloverSkips++;
+  }
+
   // FALLBACK LANDING: radar can miss a flight (transponder gap, out of
   // coverage). If the board flips to Arrived and we have no radar touchdown,
   // record the board's word instead — clearly labelled as the coarser source
-  // so the site can show it as approximate rather than pretending precision.
-  if (statusLower === "arrived" && prev && !prev.touchdown_at &&
+  // so the site shows it as approximate rather than pretending precision.
+  if (believable && statusLower === "arrived" && prev && !prev.touchdown_at &&
       prev.status && prev.status.toLowerCase() !== "arrived") {
     const nowIso = new Date().toISOString();
     row.board_arrived_at = nowIso;
@@ -301,7 +355,35 @@ const baseRows = tracked.map((r) => {
 });
 await sbUpsert("flights", baseRows);
 if (boardEvents.length) await sbInsert("flight_events", boardEvents);
-console.log(`synced ${baseRows.length} flight rows`);
+console.log(`synced ${baseRows.length} flight rows` +
+  (rolloverSkips ? ` (${rolloverSkips} rollover status rejected)` : ""));
+
+// 3a. SELF-HEAL: scrub board-sourced touchdowns that cannot be real. The
+//     midnight-rollover bug wrote a cluster of them; this clears any that
+//     already exist and would otherwise poison the delay metrics forever.
+//     Applied regardless of source — a time that cannot be real is wrong even
+//     if radar reported it — but the window is wide enough (90 min early to
+//     8 h late) that genuine early or heavily delayed arrivals survive.
+const repairs = [];
+for (const row of (existing || [])) {
+  if (!row.touchdown_at) continue;
+  if (!touchdownPlausible(row.sched_local, row.touchdown_at)) {
+    console.log(`repairing ${row.id} (${row.touchdown_source}) sched=${row.sched_local} td=${row.touchdown_at}`);
+    repairs.push({
+      id: row.id,
+      touchdown_at: null,
+      touchdown_source: null,
+      touchdown_uncert_s: null,
+      board_arrived_at: null,
+    });
+  }
+}
+if (repairs.length && !DRY_RUN) {
+  await sbUpsert("flights", repairs);
+  console.log(`REPAIRED ${repairs.length} implausible touchdown times`);
+} else if (repairs.length) {
+  console.log(`  [dry] would repair ${repairs.length} implausible touchdowns`);
+}
 
 // 3b. Remove rows for today/tomorrow that are no longer on the airport board
 //     (schedule changed, or left over from an older id scheme). Keeps the
