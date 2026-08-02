@@ -235,3 +235,12 @@ tr.detail td {
   tr.detail { display: block; }
   tr.detail td { display: block; padding: 10px 12px 14px; }
 }
+
+/* ---------- cancellation region tags ---------- */
+.cxl-item .region {
+  font: 700 9px var(--sans); letter-spacing: 1px; padding: 3px 7px; border-radius: 4px;
+}
+.cxl-item.us .region { background: var(--red); color: #fff; }
+.cxl-item.dom { background: #f6f8fa; border-color: var(--line); }
+.cxl-item.dom .region { background: #e6eaf0; color: var(--dim); }
+.cxl-item.dom .fno { color: var(--dim); }

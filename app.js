@@ -382,12 +382,16 @@ function applySupabase(payload) {
     time: r.est_local || r.sched_local || "",
     flight: r.flight_no, origin: r.origin_city || "", status: r.status || "",
   }));
-  if (Array.isArray(payload.departure_cancellations)) {
-    state.depRaw = payload.departure_cancellations.map((c) => ({
-      day: "Today", time: c.time, flight: c.flight, origin: c.origin, status: "Cancelled",
-    }));
-    state.depsFetchedAt = t;
-  }
+  // Full cancellation list (both directions, U.S. and domestic).
+  const cx = Array.isArray(payload.cancellations) ? payload.cancellations
+    : (payload.departure_cancellations || []);
+  state.cancels = cx.map((c) => ({
+    flight: c.flight, time: c.time, origin: c.origin,
+    direction: c.direction || "departure",
+    us: c.us !== undefined ? c.us : !!originInfo(c.origin || ""),
+    code: c.code || null,
+  }));
+  state.depsFetchedAt = t;
 
   state.boardFetchedAt = t;
   state.boardError = null;
@@ -863,21 +867,34 @@ function render() {
   renderCancellations();
 }
 
-/* Today's cancelled flights with a U.S. city on the other end — arrivals and
-   departures. Domestic (within-Canada) cancellations are excluded on purpose. */
+/* Every cancellation today, both directions. U.S. routes are listed first
+   because they drive customs-hall staffing, but domestic ones are shown too —
+   filtering them out meant the panel sat empty on days when only Ottawa and
+   Montreal cancelled, which is exactly when staff needed to see it. */
 function renderCancellations() {
-  const items = [];
-  for (const r of state.arrRaw) {
-    if (r.day === "Today" && !r.flight.startsWith("TS") && r.status.toLowerCase() === "cancelled" && originInfo(r.origin)) {
-      items.push({ ...r, kind: "ARRIVAL", prep: "from" });
+  let items = [];
+  if (Array.isArray(state.cancels) && state.cancels.length) {
+    items = state.cancels.map((c) => ({
+      flight: c.flight, time: c.time, origin: c.origin,
+      kind: c.direction === "arrival" ? "ARRIVAL" : "DEPARTURE",
+      prep: c.direction === "arrival" ? "from" : "to",
+      us: c.us,
+    }));
+  } else {
+    // Fallback for the older feed shape.
+    for (const r of state.arrRaw) {
+      if (r.day === "Today" && !r.flight.startsWith("TS") && (r.status || "").toLowerCase() === "cancelled") {
+        items.push({ ...r, kind: "ARRIVAL", prep: "from", us: !!originInfo(r.origin) });
+      }
+    }
+    for (const r of state.depRaw) {
+      if (r.day === "Today" && !r.flight.startsWith("TS") && (r.status || "").toLowerCase() === "cancelled") {
+        items.push({ ...r, kind: "DEPARTURE", prep: "to", us: !!originInfo(r.origin) });
+      }
     }
   }
-  for (const r of state.depRaw) {
-    if (r.day === "Today" && !r.flight.startsWith("TS") && r.status.toLowerCase() === "cancelled" && originInfo(r.origin)) {
-      items.push({ ...r, kind: "DEPARTURE", prep: "to" });
-    }
-  }
-  items.sort((a, b) => minutesOfDay(a.time) - minutesOfDay(b.time));
+  // U.S. first, then by time within each group.
+  items.sort((a, b) => (b.us - a.us) || (minutesOfDay(a.time) - minutesOfDay(b.time)));
   $("cxlCount").textContent = items.length;
   $("cxlEmpty").hidden = !!items.length;
   const btn = $("alertsBtn");
@@ -890,11 +907,12 @@ function renderCancellations() {
     const logo = cls
       ? `<svg class="airline-logo ${cls}" role="img"><use href="#${cls === "pd" ? "porter-logo" : "aircanada-logo"}"></use></svg>`
       : "";
-    return `<div class="cxl-item">
+    return `<div class="cxl-item${r.us ? " us" : " dom"}">
       <span class="fno">${esc(r.flight)}</span>
       <span class="dir">${r.kind}</span>
       ${logo}
       <span class="route">${r.prep} ${esc(r.origin)}</span>
+      <span class="region">${r.us ? "U.S." : "DOMESTIC"}</span>
       <span class="was">was ${esc(fmt12(r.time))}</span>
     </div>`;
   }).join("");

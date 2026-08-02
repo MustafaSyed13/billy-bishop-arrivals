@@ -533,10 +533,24 @@ while (Date.now() < deadline) {
 
   // 5. Publish the compact snapshot the website reads (one row, one query).
   const all = await sbFetch(`flights?select=*&service_date=in.(${serviceDate},${tomorrow})`);
-  const cancellations = depRows
+  // EVERY cancellation, both directions, U.S. and domestic. Filtering out
+  // domestic ones hid all of them on days when only Ottawa/Montreal cancelled.
+  // The client groups them; it does not need them pre-filtered.
+  const cancelOf = (rows, direction) => rows
     .filter((r) => r.day === "Today" && r.status.toLowerCase() === "cancelled" &&
-                   !r.flight.startsWith("TS") && originInfo(r.origin))
-    .map((r) => ({ flight: r.flight, time: r.time, origin: r.origin, direction: "departure" }));
+                   !r.flight.startsWith("TS"))
+    .map((r) => {
+      const us = originInfo(r.origin);
+      return {
+        flight: r.flight,
+        time: r.time,
+        origin: r.origin,
+        direction,
+        us: !!us,
+        code: us ? us.code : null,
+      };
+    });
+  const cancellations = [...cancelOf(arrRows, "arrival"), ...cancelOf(depRows, "departure")];
 
   await sbUpsert("board_state", [{
     id: 1,
@@ -546,7 +560,8 @@ while (Date.now() < deadline) {
       service_date: serviceDate,
       tomorrow_date: tomorrow,
       flights: all || [],
-      departure_cancellations: cancellations,
+      cancellations,                       // all cancellations, both directions
+      departure_cancellations: cancellations.filter((c) => c.direction === "departure"),
     },
     updated_at: new Date().toISOString(),
   }]);
