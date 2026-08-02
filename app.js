@@ -755,7 +755,10 @@ function render() {
       f.origin.toLowerCase().includes(q) ||
       f.code.toLowerCase().includes(q) ||
       f.airline.toLowerCase().includes(q))
-    .sort((a, b) => minutesOfDay(a.time) - minutesOfDay(b.time));
+    // Sort by the scheduled time we actually display, so the Sched column
+    // always reads top-to-bottom in order. Sorting by the live estimate made
+    // rows appear shuffled against the times shown next to them.
+    .sort((a, b) => minutesOfDay(a.sched || a.time) - minutesOfDay(b.sched || b.time));
 
   let html = "";
   for (const f of list) {
