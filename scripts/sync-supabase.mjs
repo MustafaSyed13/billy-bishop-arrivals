@@ -113,6 +113,24 @@ function touchdownPlausible(schedLocal, touchdownIso) {
   return diff >= -90 && diff <= 8 * 60;  // 1.5 h early .. 8 h late
 }
 
+/* Convert a Toronto wall-clock "HH:MM" on a given service date into a real UTC
+   instant. Tries both possible offsets and keeps the one that round-trips back
+   to the same local time, so DST is handled without a date library. */
+function torontoLocalToUtcIso(dateStr, hhmm) {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(String(hhmm || ""));
+  if (!m || !/^\d{4}-\d{2}-\d{2}$/.test(String(dateStr || ""))) return null;
+  const hh = String(+m[1]).padStart(2, "0"), mm = m[2];
+  for (const offset of [4, 5]) {              // EDT, then EST
+    const guess = new Date(`${dateStr}T${hh}:${mm}:00Z`);
+    guess.setUTCHours(guess.getUTCHours() + offset);
+    const back = new Intl.DateTimeFormat("en-GB", {
+      timeZone: "America/Toronto", hour: "2-digit", minute: "2-digit", hour12: false,
+    }).format(guess);
+    if (back === `${hh}:${mm}`) return guess.toISOString();
+  }
+  return null;
+}
+
 function haversineKm(a, b) {
   const R = 6371, d = Math.PI / 180;
   const dLat = (b.lat - a.lat) * d, dLon = (b.lon - a.lon) * d;
@@ -348,15 +366,22 @@ const baseRows = tracked.map((r) => {
   // coverage). If the board flips to Arrived and we have no radar touchdown,
   // record the board's word instead — clearly labelled as the coarser source
   // so the site shows it as approximate rather than pretending precision.
+  // Use the time the AIRPORT publishes in that row, not our own clock. Using
+  // now() recorded "when we noticed", so any gap between runs stamped a whole
+  // batch of flights with one identical (wrong) time.
   if (believable && statusLower === "arrived" && prev && !prev.touchdown_at &&
       prev.status && prev.status.toLowerCase() !== "arrived") {
-    const nowIso = new Date().toISOString();
-    row.board_arrived_at = nowIso;
-    row.touchdown_at = nowIso;
-    row.touchdown_source = "board";
-    row.touchdown_uncert_s = 300;          // board updates are coarse: +/- 5 min
-    boardEvents.push({ flight_id: id, event_type: "landed", detail: { source: "board" } });
-    console.log(`LANDED (board) ${r.flight}`);
+    const rowDate = r.day === "Tomorrow" ? tomorrow : serviceDate;
+    const reported = torontoLocalToUtcIso(rowDate, r.time);
+    if (reported) {
+      row.board_arrived_at = new Date().toISOString();
+      row.touchdown_at = reported;
+      row.touchdown_source = "board";
+      row.touchdown_uncert_s = 600;        // airport board times are coarse
+      boardEvents.push({ flight_id: id, event_type: "landed",
+        detail: { source: "board", reported_local: r.time } });
+      console.log(`LANDED (board) ${r.flight} reported ${r.time}`);
+    }
   }
   if (statusLower === "cancelled" && prev && prev.status &&
       prev.status.toLowerCase() !== "cancelled") {
@@ -379,27 +404,41 @@ console.log(`synced ${baseRows.length} flight rows` +
 // once per night for several nights, so the damage spans past dates that a
 // today-only scan would never revisit.
 const repairScan = await sbFetch(
-  "flights?select=id,sched_local,touchdown_at,touchdown_source&touchdown_at=not.is.null");
-const repairs = [];
+  "flights?select=id,service_date,sched_local,est_local,touchdown_at,touchdown_source&touchdown_at=not.is.null");
+const clears = [];      // impossible -> wipe
+const rewrites = [];    // board-sourced -> restate as the airport's own time
 for (const row of (repairScan || [])) {
   if (!row.touchdown_at) continue;
   if (!touchdownPlausible(row.sched_local, row.touchdown_at)) {
-    console.log(`repairing ${row.id} (${row.touchdown_source}) sched=${row.sched_local} td=${row.touchdown_at}`);
-    repairs.push(row.id);
+    console.log(`clearing ${row.id} (${row.touchdown_source}) sched=${row.sched_local} td=${row.touchdown_at}`);
+    clears.push(row.id);
+    continue;
+  }
+  // Older board rows hold "when we noticed", which clustered whenever runs were
+  // skipped. Restate them as the airport's published arrival time.
+  if (row.touchdown_source === "board" && row.est_local) {
+    const reported = torontoLocalToUtcIso(row.service_date, row.est_local);
+    if (reported && reported !== row.touchdown_at &&
+        touchdownPlausible(row.sched_local, reported)) {
+      rewrites.push({ id: row.id, touchdown_at: reported });
+    }
   }
 }
-if (repairs.length && !DRY_RUN) {
-  for (const id of repairs) {
+if (!DRY_RUN) {
+  for (const id of clears) {
     await sbPatch("flights", `id=eq.${encodeURIComponent(id)}`, {
-      touchdown_at: null,
-      touchdown_source: null,
-      touchdown_uncert_s: null,
-      board_arrived_at: null,
+      touchdown_at: null, touchdown_source: null,
+      touchdown_uncert_s: null, board_arrived_at: null,
     });
   }
-  console.log(`REPAIRED ${repairs.length} implausible touchdown times`);
-} else if (repairs.length) {
-  console.log(`  [dry] would repair ${repairs.length} implausible touchdowns`);
+  for (const rw of rewrites) {
+    await sbPatch("flights", `id=eq.${encodeURIComponent(rw.id)}`,
+      { touchdown_at: rw.touchdown_at, touchdown_uncert_s: 600 });
+  }
+}
+if (clears.length || rewrites.length) {
+  console.log(`REPAIRED: ${clears.length} cleared, ${rewrites.length} restated from airport times` +
+    (DRY_RUN ? " [dry]" : ""));
 }
 
 // 3b. Remove rows for today/tomorrow that are no longer on the airport board
