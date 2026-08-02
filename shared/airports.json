@@ -1,0 +1,28 @@
+{
+  "_comment": "SINGLE SOURCE OF TRUTH for origin-name -> airport resolution. Read by the browser (app.js, sheet.html) and by the backend collector (scripts/sync-supabase.mjs). Never duplicate this table anywhere else. Keys are lowercase prefixes matched against the origin string exactly as the Billy Bishop public board spells it; Porter writes 'Boston, MA', Air Canada writes 'Boston'.",
+  "_schemaVersion": 1,
+  "airports": {
+    "new york-newark": { "iata": "EWR", "icao": "KEWR", "city": "Newark", "airport": "Newark Liberty International", "lat": 40.6925, "lon": -74.1687, "country": "US" },
+    "newark":          { "iata": "EWR", "icao": "KEWR", "city": "Newark", "airport": "Newark Liberty International", "lat": 40.6925, "lon": -74.1687, "country": "US" },
+    "new york":        { "iata": "LGA", "icao": "KLGA", "city": "New York", "airport": "LaGuardia", "lat": 40.7772, "lon": -73.8726, "country": "US" },
+    "boston":          { "iata": "BOS", "icao": "KBOS", "city": "Boston", "airport": "Logan International", "lat": 42.3656, "lon": -71.0096, "country": "US" },
+    "chicago o'hare":  { "iata": "ORD", "icao": "KORD", "city": "Chicago", "airport": "O'Hare International", "lat": 41.9742, "lon": -87.9073, "country": "US" },
+    "chicago-o'hare":  { "iata": "ORD", "icao": "KORD", "city": "Chicago", "airport": "O'Hare International", "lat": 41.9742, "lon": -87.9073, "country": "US" },
+    "chicago-midway":  { "iata": "MDW", "icao": "KMDW", "city": "Chicago", "airport": "Midway International", "lat": 41.7868, "lon": -87.7522, "country": "US" },
+    "chicago midway":  { "iata": "MDW", "icao": "KMDW", "city": "Chicago", "airport": "Midway International", "lat": 41.7868, "lon": -87.7522, "country": "US" },
+    "washington-dulles": { "iata": "IAD", "icao": "KIAD", "city": "Washington", "airport": "Washington Dulles International", "lat": 38.9531, "lon": -77.4565, "country": "US" },
+    "washington":      { "iata": "IAD", "icao": "KIAD", "city": "Washington", "airport": "Washington Dulles International", "lat": 38.9531, "lon": -77.4565, "country": "US", "_note": "Air Canada lists this simply as 'Washington'. Confirmed by airport staff as Dulles (IAD), NOT National (DCA). Previously mismatched between frontend and backend." },
+    "nashville":       { "iata": "BNA", "icao": "KBNA", "city": "Nashville", "airport": "Nashville International", "lat": 36.1263, "lon": -86.6774, "country": "US" },
+    "orlando":         { "iata": "MCO", "icao": "KMCO", "city": "Orlando", "airport": "Orlando International", "lat": 28.4312, "lon": -81.3081, "country": "US" },
+    "tampa":           { "iata": "TPA", "icao": "KTPA", "city": "Tampa", "airport": "Tampa International", "lat": 27.9755, "lon": -82.5332, "country": "US" },
+    "fort lauderdale": { "iata": "FLL", "icao": "KFLL", "city": "Fort Lauderdale", "airport": "Fort Lauderdale-Hollywood International", "lat": 26.0742, "lon": -80.1506, "country": "US" },
+    "fort myers":      { "iata": "RSW", "icao": "KRSW", "city": "Fort Myers", "airport": "Southwest Florida International", "lat": 26.5362, "lon": -81.7552, "country": "US" },
+    "west palm beach": { "iata": "PBI", "icao": "KPBI", "city": "West Palm Beach", "airport": "Palm Beach International", "lat": 26.6832, "lon": -80.0956, "country": "US" },
+    "myrtle beach":    { "iata": "MYR", "icao": "KMYR", "city": "Myrtle Beach", "airport": "Myrtle Beach International", "lat": 33.6797, "lon": -78.9283, "country": "US" }
+  },
+  "usStates": ["AL","AK","AZ","AR","CA","CO","CT","DE","FL","GA","HI","ID","IL","IN","IA","KS","KY","LA","ME","MD","MA","MI","MN","MS","MO","MT","NE","NV","NH","NJ","NM","NY","NC","ND","OH","OK","OR","PA","RI","SC","SD","TN","TX","UT","VT","VA","WA","WV","WI","WY","DC"],
+  "airlines": {
+    "PD": { "name": "Porter", "cls": "pd", "callsigns": ["PTR", "POE"], "trackIdent": "POE" },
+    "AC": { "name": "Air Canada", "cls": "ac", "callsigns": ["JZA", "ACA", "ROU"], "trackIdent": "JZA" }
+  }
+}

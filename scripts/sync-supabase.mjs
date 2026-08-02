@@ -35,33 +35,21 @@ const RUN_MS = process.env.DRY_RUN === "1" ? 20_000 : 265_000;  // ~4.4 min, the
 const SWEEP_MS = 15_000;  // radar sample every 15 s
 const UA = "syedsgroup-ytz-board/1.0 (+ops dashboard)";
 
-/* ---------------- reference data ---------------- */
-const US_AIRPORTS = {
-  "new york-newark": { code: "EWR", city: "Newark" },
-  "newark": { code: "EWR", city: "Newark" },
-  "new york": { code: "LGA", city: "New York LaGuardia" },
-  "boston": { code: "BOS", city: "Boston" },
-  "chicago o'hare": { code: "ORD", city: "Chicago O'Hare" },
-  "chicago-o'hare": { code: "ORD", city: "Chicago O'Hare" },
-  "chicago-midway": { code: "MDW", city: "Chicago Midway" },
-  "chicago midway": { code: "MDW", city: "Chicago Midway" },
-  "washington-dulles": { code: "IAD", city: "Washington Dulles" },
-  "washington": { code: "DCA", city: "Washington National" },
-  "nashville": { code: "BNA", city: "Nashville" },
-  "orlando": { code: "MCO", city: "Orlando" },
-  "tampa": { code: "TPA", city: "Tampa" },
-  "fort lauderdale": { code: "FLL", city: "Fort Lauderdale" },
-  "fort myers": { code: "RSW", city: "Fort Myers" },
-  "west palm beach": { code: "PBI", city: "West Palm Beach" },
-  "myrtle beach": { code: "MYR", city: "Myrtle Beach" },
-};
-const US_STATES = new Set(["AL","AK","AZ","AR","CA","CO","CT","DE","FL","GA","HI","ID","IL","IN",
-  "IA","KS","KY","LA","ME","MD","MA","MI","MN","MS","MO","MT","NE","NV","NH","NJ","NM","NY","NC",
-  "ND","OH","OK","OR","PA","RI","SC","SD","TN","TX","UT","VT","VA","WA","WV","WI","WY","DC"]);
-const AIRLINES = {
-  PD: { name: "Porter", callsigns: ["PTR", "POE"] },
-  AC: { name: "Air Canada", callsigns: ["JZA", "ACA", "ROU"] },
-};
+/* ---------------- reference data ----------------
+   Loaded from the ONE canonical table shared with the frontend. Keeping a
+   second copy here is what let the backend record Washington as DCA while the
+   site displayed IAD for the same flight. Never re-inline this data. */
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
+
+const REF = JSON.parse(readFileSync(
+  join(dirname(fileURLToPath(import.meta.url)), "..", "shared", "airports.json"), "utf8"));
+
+const US_AIRPORTS = Object.fromEntries(
+  Object.entries(REF.airports).map(([k, v]) => [k, { code: v.iata, city: v.airport || v.city }]));
+const US_STATES = new Set(REF.usStates);
+const AIRLINES = REF.airlines;
 
 /* ---------------- helpers ---------------- */
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));

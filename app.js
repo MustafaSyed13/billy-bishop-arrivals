@@ -36,7 +36,13 @@ const PROXIES = [
 ];
 
 /* Origin city (as spelled on the airport board) -> airport info.
-   Porter spells cities like "Boston, MA"; Air Canada like "Boston". */
+   ============================================================
+   THIS TABLE IS A FALLBACK ONLY. The authoritative copy lives in
+   shared/airports.json and is fetched at startup by loadReferenceData(),
+   which overwrites the entries below. It exists inline purely so the board
+   still renders if that file cannot be fetched. Any correction must be made
+   in shared/airports.json — editing here alone will be silently overwritten.
+   ============================================================ */
 const US_AIRPORTS = {
   "new york-newark": { code: "EWR", city: "Newark", lat: 40.6925, lon: -74.1687 },
   "newark":          { code: "EWR", city: "Newark", lat: 40.6925, lon: -74.1687 },
@@ -102,6 +108,28 @@ const state = {
 
 /* ---------------- utilities ---------------- */
 const $ = (id) => document.getElementById(id);
+
+/* Replace the inline fallback tables with the canonical shared file, so the
+   browser and the backend collector can never disagree about an airport. */
+async function loadReferenceData() {
+  try {
+    const res = await fetch("shared/airports.json", { cache: "no-cache" });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const ref = await res.json();
+    if (!ref || !ref.airports) throw new Error("malformed reference data");
+    for (const k of Object.keys(US_AIRPORTS)) delete US_AIRPORTS[k];
+    for (const [k, v] of Object.entries(ref.airports)) {
+      US_AIRPORTS[k] = { code: v.iata, city: v.airport || v.city, lat: v.lat, lon: v.lon };
+    }
+    US_STATES.clear();
+    for (const s of ref.usStates) US_STATES.add(s);
+    for (const [k, v] of Object.entries(ref.airlines)) AIRLINES[k] = { ...AIRLINES[k], ...v };
+    state.refLoaded = true;
+  } catch (err) {
+    // Non-fatal: the inline fallback above keeps the board usable.
+    state.refError = String(err.message || err);
+  }
+}
 
 function haversineKm(a, b) {
   const R = 6371, d = Math.PI / 180;
@@ -722,16 +750,16 @@ function viewOf(f) {
       const t = new Date(ata.t);
       if (ata.src === "radar") {
         v.ataTxt = fmt12FromDate(t);
-        v.ataNote = "detected · ADS-B radar";
+        v.ataNote = "Observed · ADS-B ground detection";
       } else {
         v.ataTxt = fmt12FromDate(t);
-        v.ataApprox = true; v.ataNote = "airport board update";
+        v.ataApprox = true; v.ataNote = "Airport reported · approximate";
       }
     } else {
       // Arrived before we started watching: the airport's time column holds
       // its latest (actual-ish) arrival time.
       v.ataTxt = fmt12(f.time);
-      v.ataApprox = true; v.ataNote = "airport board";
+      v.ataApprox = true; v.ataNote = "Airport reported · approximate";
     }
     v.etaMain = v.ataTxt;
     v.etaSub = v.ataNote;
@@ -766,10 +794,10 @@ function viewOf(f) {
     // clock time is easier to plan around than "in 3 h 41 m".
     if (remain < 60) {
       v.etaMain = fmtDur(remain);
-      v.etaSub = `${clock} · live ${unc} · ${Math.round(ac.dist)} km`;
+      v.etaSub = `${clock} · ADS-B prediction ${unc} · ${Math.round(ac.dist)} km out`;
     } else {
       v.etaMain = clock;
-      v.etaSub = `live ${unc} · ${Math.round(ac.dist)} km out`;
+      v.etaSub = `ADS-B prediction ${unc} · ${Math.round(ac.dist)} km out`;
     }
     v.etaLive = true;
     v.statusTxt = ac.dist < 12 ? "On final" : ac.dist < 60 ? "Approaching" : "In flight";
@@ -782,12 +810,12 @@ function viewOf(f) {
       v.etaMain = fmtDur(dm);
       v.etaSub = acFresh && ac.grounded && ac.dist > 60
         ? `${clock} · on the ground at ${f.code}`
-        : `${clock} · airport estimate`;
+        : `${clock} · Airport estimate`;
     } else {
       v.etaMain = clock;
       v.etaSub = acFresh && ac.grounded && ac.dist > 60
         ? `on the ground at ${f.code}`
-        : (dm >= -2 ? "airport estimate" : "airport estimate · awaiting update");
+        : (dm >= -2 ? "Airport estimate" : "Airport estimate · awaiting update");
     }
   }
   return v;
@@ -1309,7 +1337,9 @@ const mapPref = localStorage.getItem(MAP_KEY);
 setMapOpen(mapPref !== null ? mapPref === "1" : true);
 
 paintCachedBoard();
-fetchBoard();
+// Canonical airport table first, so nothing is ever mapped with the fallback
+// copy; the board fetch starts immediately after regardless of the outcome.
+loadReferenceData().finally(() => fetchBoard());
 fetchDeps();
 fetchAdsb().then(scheduleAdsb);
 setInterval(fetchBoard, BOARD_INTERVAL_MS);
