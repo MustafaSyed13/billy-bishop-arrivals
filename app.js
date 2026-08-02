@@ -47,7 +47,9 @@ const US_AIRPORTS = {
   "chicago-midway":  { code: "MDW", city: "Chicago Midway", lat: 41.7868, lon: -87.7522 },
   "chicago midway":  { code: "MDW", city: "Chicago Midway", lat: 41.7868, lon: -87.7522 },
   "washington-dulles": { code: "IAD", city: "Washington Dulles", lat: 38.9531, lon: -77.4565 },
-  "washington":      { code: "DCA", city: "Washington National", lat: 38.8521, lon: -77.0377 },
+  // Air Canada lists this simply as "Washington"; the operating airport is
+  // Dulles, per airport staff — not National.
+  "washington":      { code: "IAD", city: "Washington Dulles", lat: 38.9531, lon: -77.4565 },
   "nashville":       { code: "BNA", city: "Nashville", lat: 36.1263, lon: -86.6774 },
   "orlando":         { code: "MCO", city: "Orlando", lat: 28.4312, lon: -81.3081 },
   "tampa":           { code: "TPA", city: "Tampa", lat: 27.9755, lon: -82.5332 },
@@ -661,6 +663,29 @@ function fmtDur(min) {
   return `in ${Math.floor(min / 60)} h ${String(min % 60).padStart(2, "0")} m`;
 }
 
+/* Minutes-since-Toronto-midnight for an epoch, used for ordering. */
+function torontoMinutesOf(epoch) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Toronto", hour: "2-digit", minute: "2-digit", hour12: false,
+  }).formatToParts(new Date(epoch));
+  const get = (t) => +parts.find((p) => p.type === t).value;
+  return (get("hour") % 24) * 60 + get("minute");
+}
+
+/* The time a flight is really expected on the ground: its recorded touchdown
+   if it has landed, else the live radar prediction, else the airport's own
+   current estimate. This is what the board is sorted by. */
+function arrivalOrderMinutes(f) {
+  const ata = state.ata[ataKey(f)];
+  if (ata) return torontoMinutesOf(ata.t);
+  const ac = state.aircraft.get(f.flight);
+  if (ac && !ac.grounded && (ac.gs ?? 0) > 40 && Date.now() - ac.ts < 90_000) {
+    const etaEpoch = ac.ts + ((ac.dist / (ac.gs * 1.852)) * 60 + 4) * 60_000;
+    return torontoMinutesOf(etaEpoch);
+  }
+  return minutesOfDay(f.time);        // airport's live estimate
+}
+
 function viewOf(f) {
   const st = f.status.toLowerCase();
   const ata = state.ata[ataKey(f)];
@@ -709,8 +734,21 @@ function viewOf(f) {
     return v;
   }
 
-  if (st === "delayed" || st === "late") v.statusCls = "delayed";
-  else if (st === "early") v.statusCls = "early";
+  // Delay against the original schedule, so the status word is honest even
+  // when the airport is slow to relabel a flight.
+  const schedM = minutesOfDay(f.sched || f.time);
+  const estM = minutesOfDay(f.time);
+  const lateBy = estM - schedM;
+
+  if (st === "delayed" || st === "late" || lateBy >= 15) {
+    v.statusCls = "delayed";
+    v.statusTxt = lateBy >= 15 ? `Late ${lateBy} min` : (f.status || "Delayed");
+  } else if (st === "early" || lateBy <= -10) {
+    v.statusCls = "early";
+    v.statusTxt = "Early";
+  } else {
+    v.statusTxt = "On Time";
+  }
 
   if (acFresh && !ac.grounded && ac.gs > 40) {
     // Predicted touchdown from the live position: distance over ground speed
@@ -719,19 +757,33 @@ function viewOf(f) {
     const etaEpoch = ac.ts + ((ac.dist / (ac.gs * 1.852)) * 60 + 4) * 60_000;
     const remain = (etaEpoch - Date.now()) / 60_000;
     const unc = ac.dist < 8 ? "±1 min" : ac.dist < 25 ? "±3 min" : ac.dist < 80 ? "±5 min" : "±10 min";
-    v.etaMain = fmtDur(remain);
-    v.etaSub = `${fmt12FromDate(new Date(etaEpoch))} · live ${unc} · ${Math.round(ac.dist)} km`;
+    const clock = fmt12FromDate(new Date(etaEpoch));
+    // Under an hour out, minutes are what staff actually need; beyond that a
+    // clock time is easier to plan around than "in 3 h 41 m".
+    if (remain < 60) {
+      v.etaMain = fmtDur(remain);
+      v.etaSub = `${clock} · live ${unc} · ${Math.round(ac.dist)} km`;
+    } else {
+      v.etaMain = clock;
+      v.etaSub = `live ${unc} · ${Math.round(ac.dist)} km out`;
+    }
     v.etaLive = true;
     v.statusTxt = ac.dist < 12 ? "On final" : ac.dist < 60 ? "Approaching" : "In flight";
     v.statusCls = "inflight";
   } else {
-    // No airborne radar contact: count down to the airport's estimate. If we
-    // can see the aircraft on the ground at its origin, say so.
+    // No airborne radar contact: fall back to the airport's own estimate.
     const dm = minsUntilBoardTime(f);
-    if (acFresh && ac.grounded && ac.dist > 60) {
-      v.etaSub = `on the ground at ${f.code} · ${dm > 0 ? fmtDur(dm) : "departing soon"}`;
+    const clock = fmt12(f.time);
+    if (dm >= -2 && dm < 60) {
+      v.etaMain = fmtDur(dm);
+      v.etaSub = acFresh && ac.grounded && ac.dist > 60
+        ? `${clock} · on the ground at ${f.code}`
+        : `${clock} · airport estimate`;
     } else {
-      v.etaSub = dm >= -2 ? `airport estimate · ${fmtDur(dm)}` : "airport estimate · awaiting update";
+      v.etaMain = clock;
+      v.etaSub = acFresh && ac.grounded && ac.dist > 60
+        ? `on the ground at ${f.code}`
+        : (dm >= -2 ? "airport estimate" : "airport estimate · awaiting update");
     }
   }
   return v;
@@ -755,10 +807,10 @@ function render() {
       f.origin.toLowerCase().includes(q) ||
       f.code.toLowerCase().includes(q) ||
       f.airline.toLowerCase().includes(q))
-    // Sort by the scheduled time we actually display, so the Sched column
-    // always reads top-to-bottom in order. Sorting by the live estimate made
-    // rows appear shuffled against the times shown next to them.
-    .sort((a, b) => minutesOfDay(a.sched || a.time) - minutesOfDay(b.sched || b.time));
+    // Ordered by when each flight is ACTUALLY expected to arrive, so a flight
+    // delayed from 16:00 to 18:00 drops below the 17:00 arrival — the order
+    // staff need to work the hall, not the order originally scheduled.
+    .sort((a, b) => arrivalOrderMinutes(a) - arrivalOrderMinutes(b));
 
   let html = "";
   for (const f of list) {
@@ -775,12 +827,13 @@ function render() {
   <td class="airline"><svg class="airline-logo ${f.airlineCls}" role="img" aria-label="${esc(f.airline)}"><use href="#${f.airlineCls === "pd" ? "porter-logo" : "aircanada-logo"}"></use></svg></td>
   <td class="from"><span class="code">${esc(f.code)}</span><span class="city">${esc(f.city)}</span></td>
   <td class="eta${v.etaLive ? " live" : ""}${v.ataApprox ? " approx" : ""}${v.statusCls === "cancelled" ? " cxl" : ""}"><span class="eta-main">${esc(v.etaMain)}</span>${v.etaSub ? `<span class="eta-note">${esc(v.etaSub)}</span>` : ""}</td>
+  <td class="status"><span class="chip ${v.statusCls}">${esc(v.statusTxt)}</span></td>
 
 </tr>`;
     if (state.expanded.has(f.flight)) html += detailRow(f, v);
   }
 
-  rows.innerHTML = html || `<td colspan="5" class="empty">${
+  rows.innerHTML = html || `<td colspan="6" class="empty">${
     state.boardFetchedAt
       ? (q ? "No flights match your search." : `No U.S. arrivals listed for ${state.tab.toLowerCase()}.`)
       : state.boardError
@@ -893,7 +946,7 @@ function detailRow(f, v) {
         : "Should be landing about now — waiting for the airport board to confirm.";
     }
   }
-  return `<tr class="detail"><td colspan="5">${tele}</td></tr>`;
+  return `<tr class="detail"><td colspan="6">${tele}</td></tr>`;
 }
 
 /* ---------------- landing alerts ---------------- */
@@ -1204,6 +1257,16 @@ async function checkForUpdate() {
   } catch {}
 }
 setInterval(checkForUpdate, 5 * 60_000);
+
+/* Wall-display safety net: a full page reload every 2 minutes so a screen left
+   up all shift can never drift or get stuck on a stale render. Skipped while
+   someone is actively searching or has a row open, so it never interrupts. */
+setInterval(() => {
+  if (document.hidden) return;
+  if (state.search.trim() || state.expanded.size) return;
+  if (document.activeElement && /INPUT|TEXTAREA/.test(document.activeElement.tagName)) return;
+  location.reload();
+}, 120_000);
 
 /* Keep countdowns and "Xs ago" freshness text ticking. */
 setInterval(render, 5_000);

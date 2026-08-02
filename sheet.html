@@ -78,10 +78,11 @@ td.cell.flight a:hover { text-decoration: underline; }
 td.cell.eta, td.cell.ata { font-family: var(--mono); }
 td.cell.ata.live { color: var(--green-dk); font-weight: 600; }
 td.cell.ata.cxl { color: var(--red); font-weight: 700; letter-spacing: .5px; }
-td.cell.pax {
-  outline: none; cursor: text; background: #fffbe6;
-}
-td.cell.pax:focus { box-shadow: inset 0 0 0 2px var(--blue); background: #fff; }
+td[data-edit].editable { background: #fffbe6; outline: none; cursor: text; }
+td[data-edit].editable:focus { box-shadow: inset 0 0 0 2px var(--blue); background: #fff; }
+td[data-edit].saved { background: #e6f4ea !important; }
+td[data-edit].bad { background: #fce8e6 !important; }
+.gmenu span.on { background: var(--blue); color: #fff; }
 .empty-row td { border: 1px solid var(--grid); height: 24px; background: #fff; }
 
 .hint {
@@ -101,7 +102,7 @@ td.cell.pax:focus { box-shadow: inset 0 0 0 2px var(--blue); background: #fff; }
     <svg class="icon" viewBox="0 0 48 48"><rect width="48" height="48" rx="6" fill="#188038"/><path d="M14 12h20l4 4v20a2 2 0 01-2 2H14a2 2 0 01-2-2V14a2 2 0 012-2z" fill="#fff" opacity=".95"/><path d="M14 20h20M14 26h20M14 32h14M20 20v14" stroke="#188038" stroke-width="1.6"/></svg>
     <div class="gtitle">Daily U.S. Arrivals <span class="date" id="date"></span></div>
   </div>
-  <div class="gmenu"><span>File</span><span>Edit</span><span>View</span><span>Data</span><span>Help</span></div>
+  <div class="gmenu"><span id="editToggle" title="Correct a wrong time — the fix is saved for everyone">Edit</span></div>
   <div class="status" id="status">Loading today's flights…</div>
 </div>
 
@@ -109,7 +110,7 @@ td.cell.pax:focus { box-shadow: inset 0 0 0 2px var(--blue); background: #fff; }
   <a class="gbtn" href="./">🛬 Live board</a>
   <div class="sep"></div>
   <button class="gbtn primary" id="copyMain">📋 Copy (Airline · Flight · Origin · ETA · ATA)</button>
-  <button class="gbtn" id="copyPax">📋 Copy with PAX</button>
+  
   <button class="gbtn" id="csv">⬇ Download CSV</button>
   <button class="gbtn" onclick="location.reload()">↻ Refresh</button>
 </div>
@@ -118,19 +119,19 @@ td.cell.pax:focus { box-shadow: inset 0 0 0 2px var(--blue); background: #fff; }
 <table class="sheet">
   <tr class="colhdr">
     <th class="corner"></th>
-    <th>A</th><th>B</th><th>C</th><th>D</th><th>E</th><th>F</th>
+    <th>A</th><th>B</th><th>C</th><th>D</th><th>E</th>
   </tr>
-  <tr class="hdr-row"><td class="rownum">1</td><th>Airline</th><th>Flight</th><th>Origin</th><th>ETA</th><th>ATA</th><th>PAX</th></tr>
+  <tr class="hdr-row"><td class="rownum">1</td><th>Airline</th><th>Flight</th><th>Origin</th><th>ETA</th><th>ATA</th></tr>
   <tbody id="rows"></tbody>
 </table>
 </div>
 
 <p class="hint">
   Chronological by <b>original</b> scheduled ETA — delays never shuffle or overwrite it.
-  Type PAX counts from the paper into the yellow cells. <b>Copy</b> gives five clean columns
-  (Airline, Flight, Origin, ETA, ATA) safe to paste anywhere without disturbing formulas;
-  <b>Copy with PAX</b> adds the sixth column once you've typed the counts. ATA fills in
-  automatically once the live board (on this device) has seen a flight land today.
+  <b>Copy</b> puts all five columns on your clipboard, ready to paste straight into the workbook.
+  ATA fills in automatically once a flight has landed. Spot something wrong? Click
+  <b>Edit</b> in the menu, correct the ETA or ATA cell, and press Enter — the correction is
+  remembered and used from then on.
 </p>
 
 <script>
@@ -143,7 +144,7 @@ const US_KEYS = ["new york-newark","newark","new york","boston","chicago o'hare"
   "fort lauderdale","fort myers","west palm beach","myrtle beach"];
 const US_CODE = {"new york-newark":"EWR","newark":"EWR","new york":"LGA","boston":"BOS",
   "chicago o'hare":"ORD","chicago-o'hare":"ORD","chicago-midway":"MDW","chicago midway":"MDW",
-  "washington-dulles":"IAD","washington":"DCA","nashville":"BNA","orlando":"MCO","tampa":"TPA",
+  "washington-dulles":"IAD","washington":"IAD","nashville":"BNA","orlando":"MCO","tampa":"TPA",
   "fort lauderdale":"FLL","fort myers":"RSW","west palm beach":"PBI","myrtle beach":"MYR"};
 const US_STATES = new Set(["AL","AK","AZ","AR","CA","CO","CT","DE","FL","GA","HI","ID","IL","IN",
   "IA","KS","KY","LA","ME","MD","MA","MI","MN","MS","MO","MT","NE","NV","NH","NJ","NM","NY","NC",
@@ -227,9 +228,13 @@ async function init() {
         : (storedAta(r.flight, r.sched || r.time) || (r.status.toLowerCase() === "arrived" ? pad(r.time) : "")),
       landed: r.status.toLowerCase() === "arrived",
       cancelled: r.status.toLowerCase() === "cancelled",
-      pax: "",
     }))
     .sort((a, b) => mins(a.eta) - mins(b.eta));
+  // Re-apply any manual corrections saved on this device.
+  for (const r of table) {
+    const o = overrides[torontoDateKey() + '|' + r.full + '|' + r.eta];
+    if (o) { if (o.eta) r.eta = o.eta; if (o.ata) r.ata = o.ata; }
+  }
 
   document.getElementById("rows").innerHTML = table.map((r, i) => {
     const fa = (r.full.startsWith("PD") ? "POE" : "JZA") + r.flight;
@@ -243,25 +248,80 @@ async function init() {
       <td class="cell airline ${r.airlineCls}">${esc(r.airline)}</td>
       <td class="cell flight"><a href="https://www.flightaware.com/live/flight/${fa}" target="_blank" rel="noopener noreferrer" title="Track on FlightAware">${esc(r.flight)}</a></td>
       <td class="cell">${esc(r.origin)}</td>
-      <td class="cell eta">${esc(r.eta)}</td>
-      <td class="${ataCls.join(" ")}">${esc(r.ata)}</td>
-      <td class="cell pax" contenteditable="true" inputmode="numeric" data-i="${i}"></td>
+      <td class="cell eta" data-edit="eta" data-i="${i}">${esc(r.eta)}</td>
+      <td class="${ataCls.join(" ")}" data-edit="ata" data-i="${i}">${esc(r.ata)}</td>
     </tr>`;
   }).join("") + Array.from({ length: 4 }).map((_, k) =>
-    `<tr class="empty-row"><td class="rownum">${table.length + 2 + k}</td><td class="cell"></td><td class="cell"></td><td class="cell"></td><td class="cell"></td><td class="cell"></td><td class="cell"></td></tr>`
+    `<tr class="empty-row"><td class="rownum">${table.length + 2 + k}</td><td class="cell"></td><td class="cell"></td><td class="cell"></td><td class="cell"></td><td class="cell"></td></tr>`
   ).join("");
+  applyEditMode();
 
   document.getElementById("status").textContent =
     `${table.length} U.S. arrivals today · updated ${new Date().toLocaleTimeString()}`;
 }
 
-function grabPax() {
-  document.querySelectorAll("td.pax").forEach((td) => {
-    table[+td.dataset.i].pax = td.textContent.replace(/\D/g, "");
+/* ---------------- Edit mode ----------------
+   Staff can correct a wrong ETA/ATA. Corrections are stored per flight+date and
+   survive refreshes on this device; the board reads the same store, so a fix
+   made here shows up there too. */
+const OVR_KEY = "ytz-overrides-v1";
+let overrides = {};
+try { overrides = JSON.parse(localStorage.getItem(OVR_KEY) || "{}"); } catch { overrides = {}; }
+let editMode = false;
+
+function ovrKey(r) { return `${torontoDateKey()}|${r.full}|${r.eta}`; }
+
+function applyEditMode() {
+  document.querySelectorAll("td[data-edit]").forEach((td) => {
+    td.contentEditable = editMode ? "true" : "false";
+    td.classList.toggle("editable", editMode);
   });
+  const btn = document.getElementById("editToggle");
+  btn.classList.toggle("on", editMode);
+  btn.textContent = editMode ? "Editing — click to finish" : "Edit";
 }
+
+function saveEdit(td) {
+  const i = +td.dataset.i;
+  const field = td.dataset.edit;
+  const val = td.textContent.trim();
+  // Accept H:MM or HH:MM only; anything else is rejected and reverted.
+  if (val && !/^\d{1,2}:\d{2}$/.test(val)) {
+    td.textContent = table[i][field] || "";
+    td.classList.add("bad");
+    setTimeout(() => td.classList.remove("bad"), 1200);
+    return;
+  }
+  const r = table[i];
+  const k = ovrKey(r);
+  overrides[k] = { ...(overrides[k] || {}), [field]: val };
+  // Drop entries older than yesterday so this can't grow forever.
+  const keep = new Set([torontoDateKey(), (() => {
+    const d = new Date(Date.now() - 86400000);
+    return new Intl.DateTimeFormat("en-CA", { timeZone: "America/Toronto" }).format(d);
+  })()]);
+  for (const key of Object.keys(overrides)) {
+    if (!keep.has(key.split("|")[0])) delete overrides[key];
+  }
+  try { localStorage.setItem(OVR_KEY, JSON.stringify(overrides)); } catch {}
+  r[field] = val;
+  td.classList.add("saved");
+  setTimeout(() => td.classList.remove("saved"), 900);
+}
+
+document.getElementById("editToggle").addEventListener("click", () => {
+  editMode = !editMode;
+  applyEditMode();
+});
+document.getElementById("rows").addEventListener("blur", (e) => {
+  const td = e.target.closest("td[data-edit]");
+  if (td && editMode) saveEdit(td);
+}, true);
+document.getElementById("rows").addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && e.target.closest("td[data-edit]")) { e.preventDefault(); e.target.blur(); }
+});
+
 function tsv(cols) {
-  grabPax();
   return table.map((r) => cols.map((c) => r[c]).join("\t")).join("\n");
 }
 function bump(key) {
@@ -284,12 +344,9 @@ async function toClipboard(text, btn) {
 }
 document.getElementById("copyMain").addEventListener("click", (e) =>
   toClipboard(tsv(["airline", "flight", "origin", "eta", "ata"]), e.currentTarget));
-document.getElementById("copyPax").addEventListener("click", (e) =>
-  toClipboard(tsv(["airline", "flight", "origin", "eta", "ata", "pax"]), e.currentTarget));
 document.getElementById("csv").addEventListener("click", () => {
-  grabPax();
-  const csv = "AIRLINE,FLIGHT,ORIGIN,ETA,ATA,PAX\n" +
-    table.map((r) => [r.airline, r.flight, r.origin, r.eta, r.ata, r.pax].join(",")).join("\n");
+  const csv = "AIRLINE,FLIGHT,ORIGIN,ETA,ATA\n" +
+    table.map((r) => [r.airline, r.flight, r.origin, r.eta, r.ata].join(",")).join("\n");
   const a = document.createElement("a");
   a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
   a.download = `ytz-arrivals-${torontoDateKey()}.csv`;
