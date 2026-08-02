@@ -185,6 +185,17 @@ async function sbUpsert(table, rows) {
   }
 }
 
+// PATCH = update an existing row in place. Required when clearing fields:
+// an upsert would attempt an INSERT first and trip the NOT NULL constraints
+// on service_date / flight_no / airline.
+async function sbPatch(table, filter, patch) {
+  await sbFetch(`${table}?${filter}`, {
+    method: "PATCH",
+    headers: { Prefer: "return=minimal" },
+    body: JSON.stringify(patch),
+  });
+}
+
 async function sbInsert(table, rows) {
   if (!rows.length) return;
   await sbFetch(table, {
@@ -374,17 +385,18 @@ for (const row of (repairScan || [])) {
   if (!row.touchdown_at) continue;
   if (!touchdownPlausible(row.sched_local, row.touchdown_at)) {
     console.log(`repairing ${row.id} (${row.touchdown_source}) sched=${row.sched_local} td=${row.touchdown_at}`);
-    repairs.push({
-      id: row.id,
+    repairs.push(row.id);
+  }
+}
+if (repairs.length && !DRY_RUN) {
+  for (const id of repairs) {
+    await sbPatch("flights", `id=eq.${encodeURIComponent(id)}`, {
       touchdown_at: null,
       touchdown_source: null,
       touchdown_uncert_s: null,
       board_arrived_at: null,
     });
   }
-}
-if (repairs.length && !DRY_RUN) {
-  await sbUpsert("flights", repairs);
   console.log(`REPAIRED ${repairs.length} implausible touchdown times`);
 } else if (repairs.length) {
   console.log(`  [dry] would repair ${repairs.length} implausible touchdowns`);
