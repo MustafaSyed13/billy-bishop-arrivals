@@ -790,16 +790,28 @@ function viewOf(f) {
   const estM = minutesOfDay(f.time);
   const lateBy = estM - schedM;
 
-  if (st === "delayed" || st === "late" || lateBy >= 15) {
+  // Status is computed from the airport's own two numbers (original schedule
+  // vs current estimate) rather than copied from its status word, because the
+  // two can disagree — a flight estimated 5 min after schedule was still
+  // labelled "Early". Arithmetic on published times is self-consistent; the
+  // airport's label is only used when a time is missing or unparseable.
+  const haveTimes = /^\d{1,2}:\d{2}$/.test(f.sched || f.time) && /^\d{1,2}:\d{2}$/.test(f.time);
+  if (haveTimes && lateBy >= 1) {
     v.statusCls = "delayed";
-    // Always give the number when we can compute one. A bare "Late" tells an
-    // officer nothing; "Late 5 min" and "Late 115 min" are different problems.
-    v.statusTxt = lateBy >= 1 ? `Late ${lateBy} min` : (f.status || "Delayed");
-  } else if (st === "early" || lateBy <= -10) {
+    v.statusTxt = `Late ${lateBy} min`;
+  } else if (haveTimes && lateBy <= -1) {
+    v.statusCls = "early";
+    v.statusTxt = `Early ${Math.abs(lateBy)} min`;
+  } else if (haveTimes) {
+    v.statusTxt = "On Time";
+  } else if (st === "delayed" || st === "late") {
+    v.statusCls = "delayed";
+    v.statusTxt = f.status || "Delayed";
+  } else if (st === "early") {
     v.statusCls = "early";
     v.statusTxt = "Early";
   } else {
-    v.statusTxt = "On Time";
+    v.statusTxt = f.status || "Scheduled";
   }
 
   if (acFresh && !ac.grounded && ac.gs > 40) {
