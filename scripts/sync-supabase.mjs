@@ -448,6 +448,40 @@ if (stale.length && !DRY_RUN) {
   console.log(`  [dry] would remove ${stale.length} stale rows`);
 }
 
+// 3c. BACKFILL: correct historical rows whose origin code disagrees with the
+//     canonical airport table. The collector only ever revisits flights on
+//     today's board, so rows written before shared/airports.json existed keep
+//     stale codes forever (e.g. Washington recorded as DCA instead of IAD) and
+//     would silently skew any historical reporting.
+const cityToCode = new Map();
+for (const v of Object.values(REF.airports)) {
+  cityToCode.set((v.airport || v.city).toLowerCase(), v.iata);
+  cityToCode.set(v.city.toLowerCase(), v.iata);
+}
+const CODE_ALIASES = { DCA: "IAD" };   // corrections confirmed by airport staff
+try {
+  const historical = await sbFetch("flights?select=id,origin_code,origin_city");
+  const fixes = [];
+  for (const row of (historical || [])) {
+    const want = CODE_ALIASES[row.origin_code];
+    if (!want || want === row.origin_code) continue;
+    const canonical = Object.values(REF.airports).find((a) => a.iata === want);
+    fixes.push({
+      id: row.id,
+      origin_code: want,
+      origin_city: canonical ? (canonical.airport || canonical.city) : row.origin_city,
+    });
+  }
+  if (fixes.length && !DRY_RUN) {
+    await sbUpsert("flights", fixes);
+    console.log(`BACKFILLED ${fixes.length} rows to canonical airport codes`);
+  } else if (fixes.length) {
+    console.log(`  [dry] would backfill ${fixes.length} origin codes`);
+  }
+} catch (err) {
+  console.log(`origin backfill skipped: ${err.message}`);
+}
+
 // 4. Sweep radar repeatedly for the rest of this run.
 const deadline = Date.now() + RUN_MS;
 let sweeps = 0, landings = 0;
