@@ -7,9 +7,9 @@
    CacheStorage is shared across the whole GitHub Pages origin, so this app
    uses its own "bba-" prefix and only ever deletes its own old caches. */
 
-const CACHE = "bba-shell-v12";
+const CACHE = "bba-shell-v13";
 const LEGACY_CACHES = ["ytz-shell-v8"];
-const SHELL = ["./", "manifest.json", "icon-192.png", "icon-512.png"];
+const SHELL = ["index.html", "manifest.json", "icon-192.png", "icon-512.png"];
 
 self.addEventListener("install", (e) => {
   e.waitUntil(
@@ -40,12 +40,27 @@ self.addEventListener("fetch", (e) => {
   if (e.request.mode === "navigate") {
     e.respondWith(
       caches.open(CACHE).then(async (c) => {
+        // Some managed browsers (CBSA Edge) permanently cached a 301 for the
+        // bare scope root during the brief custom-domain attempt. Two defences:
+        // 1) rewrite root navigations to index.html — same page, but a URL the
+        //    poisoned cache entry can never match; 2) fetch with redirect:
+        //    "manual" so a stale redirect is treated as a failure instead of
+        //    being followed into caching a foreign site as our app. Net effect:
+        //    one successful visit anywhere in scope immunizes the machine.
+        const target = url.pathname.endsWith("/")
+          ? new URL("index.html" + url.search, url).href
+          : e.request;
         try {
-          const fresh = await fetch(e.request);
-          if (fresh && fresh.ok) c.put(e.request, fresh.clone());
-          return fresh;
+          const fresh = await fetch(target, { redirect: "manual" });
+          if (fresh && fresh.type === "opaqueredirect") throw new Error("stale cached redirect");
+          if (fresh && fresh.ok) {
+            c.put(target, fresh.clone());
+            return fresh;
+          }
+          throw new Error("nav fetch " + (fresh && fresh.status));
         } catch {
-          return (await c.match(e.request)) || (await c.match("./")) || Response.error();
+          return (await c.match(target)) || (await c.match("index.html")) ||
+                 (await c.match(e.request)) || (await c.match("./")) || Response.error();
         }
       })
     );
@@ -71,7 +86,7 @@ self.addEventListener("notificationclick", (e) => {
   e.waitUntil(
     self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((tabs) => {
       if (tabs.length) return tabs[0].focus();
-      return self.clients.openWindow(".");
+      return self.clients.openWindow("index.html");
     })
   );
 });

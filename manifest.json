@@ -2,7 +2,7 @@
   "name": "YTZ U.S. Arrivals - Billy Bishop Live Board",
   "short_name": "YTZ Arrivals",
   "description": "Live U.S. arrivals board for Billy Bishop Toronto City Airport with radar touchdown detection.",
-  "start_url": ".",
+  "start_url": "index.html",
   "scope": ".",
   "display": "standalone",
   "orientation": "portrait-primary",

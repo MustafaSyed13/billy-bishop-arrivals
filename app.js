@@ -1,4 +1,14 @@
 "use strict";
+/* Older enterprise Edge builds predate AbortSignal.timeout (Edge 103, 2022).
+   Provide it so one missing API can never take down a whole fetch path on a
+   managed government machine pinned to an old browser image. */
+if (typeof AbortSignal !== "undefined" && !AbortSignal.timeout) {
+  AbortSignal.timeout = function (ms) {
+    const ctrl = new AbortController();
+    setTimeout(function () { ctrl.abort(); }, ms);
+    return ctrl.signal;
+  };
+}
 /* ============================================================
    YTZ U.S. Arrivals — live board for Billy Bishop (Toronto City)
    Data sources (all free, keyless):
