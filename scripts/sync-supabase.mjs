@@ -473,7 +473,16 @@ try {
     });
   }
   if (fixes.length && !DRY_RUN) {
-    await sbUpsert("flights", fixes);
+    // PATCH, not upsert: an upsert carrying only a few columns makes Postgres
+    // attempt an INSERT, which then fails on NOT NULL columns like service_date.
+    for (const fix of fixes) {
+      const { id, ...cols } = fix;
+      await sbFetch(`flights?id=eq.${encodeURIComponent(id)}`, {
+        method: "PATCH",
+        headers: { Prefer: "return=minimal" },
+        body: JSON.stringify(cols),
+      });
+    }
     console.log(`BACKFILLED ${fixes.length} rows to canonical airport codes`);
   } else if (fixes.length) {
     console.log(`  [dry] would backfill ${fixes.length} origin codes`);
