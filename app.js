@@ -895,34 +895,35 @@ function render() {
   renderCancellations();
 }
 
-/* Every cancellation today, both directions. U.S. routes are listed first
-   because they drive customs-hall staffing, but domestic ones are shown too —
-   filtering them out meant the panel sat empty on days when only Ottawa and
-   Montreal cancelled, which is exactly when staff needed to see it. */
+/* Cancelled U.S. flights today, inbound and outbound.
+   Deliberately U.S. only: domestic flights do not clear customs, so a
+   within-Canada cancellation is noise for this hall. An empty panel is a real
+   answer here — "no U.S. cancellations today" — not a failure. */
 function renderCancellations() {
   let items = [];
   if (Array.isArray(state.cancels) && state.cancels.length) {
-    items = state.cancels.map((c) => ({
+    items = state.cancels.filter((c) => c.us).map((c) => ({
       flight: c.flight, time: c.time, origin: c.origin,
       kind: c.direction === "arrival" ? "ARRIVAL" : "DEPARTURE",
       prep: c.direction === "arrival" ? "from" : "to",
-      us: c.us,
+      us: true,
     }));
   } else {
-    // Fallback for the older feed shape.
+    // Fallback for the older feed shape — same U.S.-only rule.
     for (const r of state.arrRaw) {
-      if (r.day === "Today" && !r.flight.startsWith("TS") && (r.status || "").toLowerCase() === "cancelled") {
-        items.push({ ...r, kind: "ARRIVAL", prep: "from", us: !!originInfo(r.origin) });
+      if (r.day === "Today" && !r.flight.startsWith("TS") &&
+          (r.status || "").toLowerCase() === "cancelled" && originInfo(r.origin)) {
+        items.push({ ...r, kind: "ARRIVAL", prep: "from", us: true });
       }
     }
     for (const r of state.depRaw) {
-      if (r.day === "Today" && !r.flight.startsWith("TS") && (r.status || "").toLowerCase() === "cancelled") {
-        items.push({ ...r, kind: "DEPARTURE", prep: "to", us: !!originInfo(r.origin) });
+      if (r.day === "Today" && !r.flight.startsWith("TS") &&
+          (r.status || "").toLowerCase() === "cancelled" && originInfo(r.origin)) {
+        items.push({ ...r, kind: "DEPARTURE", prep: "to", us: true });
       }
     }
   }
-  // U.S. first, then by time within each group.
-  items.sort((a, b) => (b.us - a.us) || (minutesOfDay(a.time) - minutesOfDay(b.time)));
+  items.sort((a, b) => minutesOfDay(a.time) - minutesOfDay(b.time));
   $("cxlCount").textContent = items.length;
   $("cxlEmpty").hidden = !!items.length;
   const btn = $("alertsBtn");
