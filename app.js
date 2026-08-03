@@ -332,6 +332,10 @@ function trackCancellations(raw, prevMap, kind) {
    shows the SAME time instead of each browser judging independently. The
    publishable key below is read-only by design (enforced by row-level security
    in the database), which is why it is safe to ship in public page code. */
+// Beyond this age the backend snapshot is no longer trusted as current, and
+// the client tries the live sources instead of settling for it.
+const BACKEND_STALE_MS = 180_000;      // 3 minutes
+
 const SUPA_URL = "https://crrrykfftzlzymmmawsn.supabase.co/rest/v1";
 const SUPA_KEY = "sb_publishable_b5eZTW04X5TiOo_vt190Rg_rRLkz3Gf";
 
@@ -460,11 +464,18 @@ async function fetchBoard() {
   // Three sources, most authoritative first. Supabase carries the canonical
   // landing times; the others exist so the board can never go blank if the
   // backend is unreachable.
+  // The backend is canonical, but only while it is actually current. Its
+  // collector runs on GitHub's free scheduler, which throttles hard — observed
+  // gaps of over two hours. Treating "the server answered" as success meant a
+  // three-hour-old snapshot silently beat a live scrape. So: use the backend
+  // immediately either way, but if it is stale, keep going and try to upgrade
+  // it with fresher data rather than stopping here.
   try {
-    if (applySupabase(await fetchSupabase())) {
-      render();
-      return;                          // canonical data in hand, nothing else needed
-    }
+    const payload = await fetchSupabase();
+    const applied = applySupabase(payload);
+    const age = Date.now() - (Date.parse(payload.generated_at) || 0);
+    if (applied) render();             // paint what we have straight away
+    if (applied && age < BACKEND_STALE_MS) return;   // fresh: nothing better available
   } catch (_) { /* fall through to the older paths */ }
 
   // Feed first: paints in ~200 ms. The live scrape below is fresher but slow
@@ -708,6 +719,13 @@ function torontoMinutesOf(epoch) {
    if it has landed, else the live radar prediction, else the airport's own
    current estimate. This is what the board is sorted by. */
 function arrivalOrderMinutes(f) {
+  // A cancelled flight has no meaningful expected arrival. The airport often
+  // leaves a stale or drifted estimate on the row, which was throwing e.g. a
+  // 3:05 PM cancellation down between the 5:55 and 6:48 arrivals. Hold it in
+  // its originally scheduled slot so staff can see which slot went away.
+  if ((f.status || "").toLowerCase() === "cancelled") {
+    return minutesOfDay(f.sched || f.time);
+  }
   const ata = state.ata[ataKey(f)];
   if (ata) return torontoMinutesOf(ata.t);
   const ac = state.aircraft.get(f.flight);
@@ -774,7 +792,9 @@ function viewOf(f) {
 
   if (st === "delayed" || st === "late" || lateBy >= 15) {
     v.statusCls = "delayed";
-    v.statusTxt = lateBy >= 15 ? `Late ${lateBy} min` : (f.status || "Delayed");
+    // Always give the number when we can compute one. A bare "Late" tells an
+    // officer nothing; "Late 5 min" and "Late 115 min" are different problems.
+    v.statusTxt = lateBy >= 1 ? `Late ${lateBy} min` : (f.status || "Delayed");
   } else if (st === "early" || lateBy <= -10) {
     v.statusCls = "early";
     v.statusTxt = "Early";
@@ -878,13 +898,26 @@ function render() {
   fr.textContent =
     `board ${state.boardFetchedAt ? ago(state.boardFetchedAt) + " ago" : "…"}` +
     ` · radar ${state.adsbFetchedAt ? ago(state.adsbFetchedAt) + " ago" : "…"}`;
+  // Health is reported per source rather than as one blanket "LIVE", so a
+  // current radar feed can never make a stale flight board look healthy.
   const live = $("liveDot").parentElement;
   const boardAge = Date.now() - state.boardFetchedAt;
-  live.classList.toggle("down", !state.boardFetchedAt && !!state.boardError);
-  live.classList.toggle("stale", !!state.boardFetchedAt && boardAge > 3 * BOARD_INTERVAL_MS);
+  const radarAge = Date.now() - state.adsbFetchedAt;
+  const boardStale = boardAge > 5 * 60_000;
+  const boardDead = boardAge > 20 * 60_000;
+  const radarStale = !state.adsbFetchedAt || radarAge > 90_000;
+
+  live.classList.toggle("down", (!state.boardFetchedAt && !!state.boardError) || boardDead);
+  live.classList.toggle("stale", !!state.boardFetchedAt && (boardStale || radarStale) && !boardDead);
   $("liveLabel").textContent =
     !state.boardFetchedAt && state.boardError ? "OFFLINE"
-      : boardAge > 3 * BOARD_INTERVAL_MS ? "STALE" : "LIVE";
+      : boardDead ? "DATA STALE"
+      : boardStale ? "FLIGHT DATA DELAYED"
+      : radarStale ? "RADAR DEGRADED"
+      : "ALL SOURCES LIVE";
+  live.title =
+    `Flight board: ${state.boardFetchedAt ? ago(state.boardFetchedAt) + " old" : "unavailable"}\n` +
+    `Radar: ${state.adsbFetchedAt ? ago(state.adsbFetchedAt) + " old" : "unavailable"}`;
 
   const banner = $("banner");
   if (state.boardError && state.boardFetchedAt) {
