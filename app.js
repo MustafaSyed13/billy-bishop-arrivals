@@ -96,6 +96,8 @@ const state = {
   depRaw: [],             // every departure row
   prevArr: new Map(),     // cancellation flip detection, arrivals
   prevDep: new Map(),     // cancellation flip detection, departures
+  cancels: [],            // today's cancellations, freshest source wins
+  cancelsAt: 0,           // when that list was observed
   depsFetchedAt: 0,
   cxlOpen: true,
   focus: null,            // flight currently focused on the map (route drawn)
@@ -293,6 +295,15 @@ function paintCachedBoard() {
     if (c && Date.now() - c.t < 24 * 3_600_000 && Array.isArray(c.flights) && c.flights.length) {
       state.flights = c.flights;
       state.boardFetchedAt = c.t;
+      // Restore cancellations too — but only when the cache was written on
+      // the current Toronto day, so yesterday's cancellations never bleed
+      // into this morning's board.
+      const cacheDay = new Intl.DateTimeFormat("en-CA", { timeZone: "America/Toronto" })
+        .format(new Date(c.t));
+      if (cacheDay === torontoDateKey() && Array.isArray(c.cancels)) {
+        state.cancels = c.cancels;
+        state.cancelsAt = c.cancelsAt || c.t;
+      }
       render();
     }
   } catch {}
@@ -391,9 +402,42 @@ function flightFromDbRow(r, todayKey) {
   };
 }
 
+/* Cancellations were flaky because they lived in exactly one source: refresh
+   while that source lagged and the panel came up empty or half-full. Now every
+   source derives them, the freshest set wins, and the result is cached — so
+   they can never vanish on a refresh again. */
+function deriveCancels(arrRows, depRows) {
+  const out = [];
+  const push = (r, direction) => {
+    if (!r || r.day !== "Today" || String(r.flight || "").startsWith("TS")) return;
+    if ((r.status || "").toLowerCase() !== "cancelled") return;
+    out.push({ flight: r.flight, time: r.time, origin: r.origin, direction,
+      us: !!originInfo(r.origin || "") });
+  };
+  for (const r of arrRows || []) push(r, "arrival");
+  for (const r of depRows || []) push(r, "departure");
+  return out;
+}
+
+function adoptCancels(list, at) {
+  if (!Array.isArray(list) || at <= (state.cancelsAt || 0)) return;
+  state.cancels = list;
+  state.cancelsAt = at;
+}
+
 function applySupabase(payload) {
   const t = Date.parse(payload.generated_at) || 0;
   if (!t) return false;
+  // Adopt the backend's cancellation list BEFORE any freshness early-return:
+  // even when its flight list is older than what we hold, its cancellations
+  // are still better than an empty panel.
+  if (Array.isArray(payload.cancellations)) {
+    adoptCancels(payload.cancellations.map((c) => ({
+      flight: c.flight, time: c.time, origin: c.origin,
+      direction: c.direction || "departure",
+      us: c.us !== undefined ? c.us : !!originInfo(c.origin || ""),
+    })), t);
+  }
   // Older than what we already hold: ignore it.
   if (t < state.boardFetchedAt) return false;
   // Exactly what we already painted from cache: we're current, so report
@@ -424,20 +468,11 @@ function applySupabase(payload) {
     time: r.est_local || r.sched_local || "",
     flight: r.flight_no, origin: r.origin_city || "", status: r.status || "",
   }));
-  // Full cancellation list (both directions, U.S. and domestic).
-  const cx = Array.isArray(payload.cancellations) ? payload.cancellations
-    : (payload.departure_cancellations || []);
-  state.cancels = cx.map((c) => ({
-    flight: c.flight, time: c.time, origin: c.origin,
-    direction: c.direction || "departure",
-    us: c.us !== undefined ? c.us : !!originInfo(c.origin || ""),
-    code: c.code || null,
-  }));
-  state.depsFetchedAt = t;
+  state.depsFetchedAt = t;   // cancellations were already adopted above
 
   state.boardFetchedAt = t;
   state.boardError = null;
-  try { localStorage.setItem(BOARD_CACHE_KEY, JSON.stringify({ t, flights })); } catch {}
+  try { localStorage.setItem(BOARD_CACHE_KEY, JSON.stringify({ t, flights, cancels: state.cancels, cancelsAt: state.cancelsAt })); } catch {}
   return true;
 }
 
@@ -464,9 +499,10 @@ function applyFeed(j) {
     trackCancellations(j.departures, state.prevDep, "departure");
     state.depsFetchedAt = t;
   }
+  adoptCancels(deriveCancels(j.arrivals, j.departures), t);
   state.boardFetchedAt = t;
   state.boardError = null;
-  try { localStorage.setItem(BOARD_CACHE_KEY, JSON.stringify({ t, flights })); } catch {}
+  try { localStorage.setItem(BOARD_CACHE_KEY, JSON.stringify({ t, flights, cancels: state.cancels, cancelsAt: state.cancelsAt })); } catch {}
   return true;
 }
 
@@ -498,10 +534,11 @@ async function fetchBoard() {
     applyBoard(flights);
     state.arrRaw = raw;
     trackCancellations(raw, state.prevArr, "arrival");
+    adoptCancels(deriveCancels(raw, state.depRaw), Date.now());
     state.boardFetchedAt = Date.now();
     state.boardError = null;
     try {
-      localStorage.setItem(BOARD_CACHE_KEY, JSON.stringify({ t: Date.now(), flights }));
+      localStorage.setItem(BOARD_CACHE_KEY, JSON.stringify({ t: Date.now(), flights, cancels: state.cancels, cancelsAt: state.cancelsAt }));
     } catch {}
   } catch (e) {
     // Live scrape failed; if the feed covered us recently, that's not an error
@@ -519,6 +556,7 @@ async function fetchDeps() {
     const raw = await fetchViaProxies(`${DEPS_URL}?_=${Date.now()}`);
     state.depRaw = raw;
     trackCancellations(raw, state.prevDep, "departure");
+    adoptCancels(deriveCancels(state.arrRaw, raw), Date.now());
     state.depsFetchedAt = Date.now();
   } catch {} // panel simply shows arrivals-only when the departures feed is down
   render();
@@ -955,30 +993,18 @@ function render() {
    within-Canada cancellation is noise for this hall. An empty panel is a real
    answer here — "no U.S. cancellations today" — not a failure. */
 function renderCancellations() {
-  let items = [];
-  if (Array.isArray(state.cancels) && state.cancels.length) {
-    items = state.cancels.filter((c) => c.us).map((c) => ({
+  // One path only. state.cancels is maintained by every data source through
+  // adoptCancels() and survives refreshes via the board cache, so this render
+  // can never come up empty just because one particular source was slow.
+  const items = (state.cancels || [])
+    .filter((c) => c.us)
+    .map((c) => ({
       flight: c.flight, time: c.time, origin: c.origin,
       kind: c.direction === "arrival" ? "ARRIVAL" : "DEPARTURE",
       prep: c.direction === "arrival" ? "from" : "to",
       us: true,
-    }));
-  } else {
-    // Fallback for the older feed shape — same U.S.-only rule.
-    for (const r of state.arrRaw) {
-      if (r.day === "Today" && !r.flight.startsWith("TS") &&
-          (r.status || "").toLowerCase() === "cancelled" && originInfo(r.origin)) {
-        items.push({ ...r, kind: "ARRIVAL", prep: "from", us: true });
-      }
-    }
-    for (const r of state.depRaw) {
-      if (r.day === "Today" && !r.flight.startsWith("TS") &&
-          (r.status || "").toLowerCase() === "cancelled" && originInfo(r.origin)) {
-        items.push({ ...r, kind: "DEPARTURE", prep: "to", us: true });
-      }
-    }
-  }
-  items.sort((a, b) => minutesOfDay(a.time) - minutesOfDay(b.time));
+    }))
+    .sort((a, b) => minutesOfDay(a.time) - minutesOfDay(b.time));
   $("cxlCount").textContent = items.length;
   $("cxlEmpty").hidden = !!items.length;
   const btn = $("alertsBtn");
@@ -1322,6 +1348,8 @@ setInterval(() => {
   if (d !== currentDay) {
     currentDay = d;
     state.ata = loadAta();
+    state.cancels = [];      // yesterday's cancellations end at midnight
+    state.cancelsAt = 0;
     fetchBoard();
   }
 }, 60_000);

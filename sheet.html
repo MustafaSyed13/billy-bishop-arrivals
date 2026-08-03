@@ -136,6 +136,10 @@ td[data-edit].bad { background: #fce8e6 !important; }
 "use strict";
 const FEED = "https://raw.githubusercontent.com/MustafaSyed13/billy-bishop-arrivals/data/board.json";
 const BOARD = "https://www.billybishopairport.com/flights/arrivals/";
+// Canonical backend snapshot — carries confirmed landing times. The key is
+// read-only by design (database row-level security); safe in page code.
+const SUPA = "https://crrrykfftzlzymmmawsn.supabase.co/rest/v1";
+const SUPA_KEY = "sb_publishable_b5eZTW04X5TiOo_vt190Rg_rRLkz3Gf";
 
 const US_KEYS = ["new york-newark","newark","new york","boston","chicago o'hare","chicago-o'hare",
   "chicago-midway","chicago midway","washington-dulles","washington","nashville","orlando","tampa",
@@ -195,35 +199,95 @@ function parseHtmlRows(html) {
   return rows;
 }
 
+/* Backend snapshot rows -> the shape the rest of this page speaks. These rows
+   also carry origin_code and the confirmed landing time, which are better
+   than anything this page can derive on its own. */
+function rowsFromSnapshot(payload) {
+  const today = torontoDateKey();
+  return (payload.flights || [])
+    .filter((f) => f.service_date === today && f.flight_no)
+    .map((f) => ({
+      day: "Today",
+      time: f.est_local || f.sched_local || "",
+      sched: f.sched_local || "",
+      flight: f.flight_no,
+      origin: f.origin_city || "",
+      code: f.origin_code || null,
+      status: f.status || "",
+      ataDb: f.touchdown_at ? fmtToronto(Date.parse(f.touchdown_at)) : "",
+    }));
+}
+
+function saveSheetCache(rows) {
+  try { localStorage.setItem("ytz-sheet-cache", JSON.stringify({ t: Date.now(), rows })); } catch {}
+}
+function loadSheetCache() {
+  try {
+    const c = JSON.parse(localStorage.getItem("ytz-sheet-cache") || "null");
+    if (c && Array.isArray(c.rows) && c.rows.length && Date.now() - c.t < 18 * 3600_000) return c;
+  } catch {}
+  return null;
+}
+
+/* Four sources tried in order, then the last good copy saved on this device.
+   The office network shares one IP across ~30 staff, so any single provider
+   can be rate-limited at any moment — a blank sheet is never an acceptable
+   answer when we have yesterday's-coffee-fresh data available. */
 async function loadRows() {
+  let staleBackend = null;
+  // 1. Canonical backend (fresh)
+  try {
+    const res = await fetch(`${SUPA}/board_state?select=payload`, { headers: { apikey: SUPA_KEY } });
+    const payload = (await res.json())[0].payload;
+    const age = Date.now() - (Date.parse(payload.generated_at) || 0);
+    const rows = rowsFromSnapshot(payload);
+    if (rows.length && age < 15 * 60_000) { saveSheetCache(rows); return { rows, note: "" }; }
+    if (rows.length) staleBackend = rows;
+  } catch {}
+  // 2. GitHub data feed
   try {
     const res = await fetch(`${FEED}?t=${Math.floor(Date.now() / 120000)}`);
     const j = await res.json();
-    if (j && Array.isArray(j.arrivals) && j.arrivals.length) return j.arrivals;
+    if (j && Array.isArray(j.arrivals) && j.arrivals.length) {
+      saveSheetCache(j.arrivals);
+      return { rows: j.arrivals, note: "" };
+    }
   } catch {}
-  const res = await fetch(`https://r.jina.ai/${BOARD}?_=${Date.now()}`,
-    { headers: { "x-respond-with": "html", "x-engine": "direct" } });
-  return parseHtmlRows(await res.text());
+  // 3. Live airport page via reader proxy
+  try {
+    const res = await fetch(`https://r.jina.ai/${BOARD}?_=${Date.now()}`,
+      { headers: { "x-respond-with": "html", "x-engine": "direct" } });
+    const rows = parseHtmlRows(await res.text());
+    if (rows.length) { saveSheetCache(rows); return { rows, note: "" }; }
+  } catch {}
+  // 4. A delayed backend snapshot still beats nothing
+  if (staleBackend) return { rows: staleBackend, note: "backend data (delayed)" };
+  // 5. Last good copy saved on this device
+  const c = loadSheetCache();
+  if (c) return { rows: c.rows, note: "saved copy from " + fmtToronto(c.t) };
+  throw new Error("no source available");
 }
 
 let table = [];
 async function init() {
   document.getElementById("date").textContent = new Intl.DateTimeFormat("en-US",
     { timeZone: "America/Toronto", weekday: "long", month: "short", day: "numeric", year: "numeric" }).format(new Date());
-  let rows;
-  try { rows = await loadRows(); }
+  let rows, note = "";
+  try { const got = await loadRows(); rows = got.rows; note = got.note; }
   catch { document.getElementById("status").innerHTML = '<span class="err">Could not load flight data — check connection and refresh.</span>'; return; }
   table = rows
-    .filter((r) => r.day === "Today" && /^(PD|AC)\d/.test(r.flight) && usCode(r.origin))
+    .filter((r) => r.day === "Today" && /^(PD|AC)\d/.test(r.flight) && (r.code || usCode(r.origin)))
     .map((r) => ({
       airline: r.flight.startsWith("PD") ? "Porter" : "AC",
       airlineCls: r.flight.startsWith("PD") ? "pd" : "ac",
       flight: r.flight.replace(/\D/g, ""),
       full: r.flight,
-      origin: usCode(r.origin),
+      origin: r.code || usCode(r.origin),
       eta: pad(r.sched || r.time),
+      // Confirmed landing time from the backend beats anything derived here.
       ata: r.status.toLowerCase() === "cancelled" ? "CXL"
-        : (storedAta(r.flight, r.sched || r.time) || (r.status.toLowerCase() === "arrived" ? pad(r.time) : "")),
+        : (r.ataDb || storedAta(r.flight, r.sched || r.time)
+           || (r.status.toLowerCase() === "arrived" ? pad(r.time) : "")),
       landed: r.status.toLowerCase() === "arrived",
       cancelled: r.status.toLowerCase() === "cancelled",
     }))
@@ -255,7 +319,8 @@ async function init() {
   applyEditMode();
 
   document.getElementById("status").textContent =
-    `${table.length} U.S. arrivals today · updated ${new Date().toLocaleTimeString()}`;
+    `${table.length} U.S. arrivals today · updated ${new Date().toLocaleTimeString()}` +
+    (note ? ` · ${note}` : "");
 }
 
 /* ---------------- Edit mode ----------------
