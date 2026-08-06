@@ -357,6 +357,9 @@ function trackCancellations(raw, prevMap, kind) {
 // the client tries the live sources instead of settling for it.
 const BACKEND_STALE_MS = 180_000;      // 3 minutes
 
+// How long a landed flight stays on the board before it drops off.
+const RETAIN_LANDED_MIN = 60;
+
 const SUPA_URL = "https://crrrykfftzlzymmmawsn.supabase.co/rest/v1";
 const SUPA_KEY = "sb_publishable_b5eZTW04X5TiOo_vt190Rg_rRLkz3Gf";
 
@@ -784,6 +787,22 @@ function arrivalOrderMinutes(f) {
   return minutesOfDay(f.time);        // airport's live estimate
 }
 
+/* Minutes since a flight finished, or null if it hasn't. Uses the recorded
+   arrival when we have one, otherwise the airport's own arrival time. Only
+   applies to today — "Tomorrow" has nothing completed. */
+function completedMinutesAgo(f) {
+  if (f.day !== "Today") return null;
+  const ata = state.ata[ataKey(f)];
+  if (ata && ata.t) return (Date.now() - ata.t) / 60_000;
+  if ((f.status || "").toLowerCase() === "arrived") {
+    const mins = torontoMinutesNow() - minutesOfDay(f.time);
+    // Guard the midnight wrap: a large negative means the arrival time is
+    // "later today" only because the clock has rolled past it.
+    return mins >= 0 ? mins : null;
+  }
+  return null;
+}
+
 function viewOf(f) {
   const st = f.status.toLowerCase();
   const ata = state.ata[ataKey(f)];
@@ -912,8 +931,18 @@ function faIdent(f) {
 function render() {
   const rows = $("rows");
   const q = state.search.trim().toLowerCase();
+  // Drop flights that finished more than an hour ago: once a flight has
+  // landed and been processed it is just clutter on an operational board.
+  // Searching still reaches them, so nothing is truly lost.
+  let retired = 0;
   const list = state.flights
     .filter((f) => f.day === state.tab)
+    .filter((f) => {
+      if (q) return true;                       // a search should find anything
+      const done = completedMinutesAgo(f);
+      if (done !== null && done > RETAIN_LANDED_MIN) { retired++; return false; }
+      return true;
+    })
     .filter((f) => !q ||
       f.flight.toLowerCase().includes(q) ||
       f.origin.toLowerCase().includes(q) ||
@@ -957,7 +986,9 @@ function render() {
   const fr = $("freshness");
   fr.textContent =
     `board ${state.boardFetchedAt ? ago(state.boardFetchedAt) + " ago" : "…"}` +
-    ` · radar ${state.adsbFetchedAt ? ago(state.adsbFetchedAt) + " ago" : "…"}`;
+    ` · radar ${state.adsbFetchedAt ? ago(state.adsbFetchedAt) + " ago" : "…"}` +
+    // Say so rather than letting flights silently disappear.
+    (retired ? ` · ${retired} cleared over ${RETAIN_LANDED_MIN} min ago hidden` : "");
   // Health is reported per source rather than as one blanket "LIVE", so a
   // current radar feed can never make a stale flight board look healthy.
   const live = $("liveDot").parentElement;
