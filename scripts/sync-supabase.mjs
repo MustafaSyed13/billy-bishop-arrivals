@@ -255,23 +255,40 @@ async function fetchRadar() {
 
 /* Marketing number (AC8548) -> the callsign the aircraft actually broadcasts.
    Jazz sometimes drops the leading digit, hence the extra candidate. */
+const MAX_FIX_AGE_S = 120;   // ignore position fixes older than this
+
+/* Marketing flight number -> the callsign the aircraft actually broadcasts.
+   Exact callsigns are trusted outright. The Jazz shortened form (AC8548 ->
+   JZA548) is only accepted as a LAST RESORT, because JZA548 can legitimately
+   be a completely different Jazz flight — matching it blindly is how a flight
+   still en route gets attributed to an aircraft already on the ground here. */
 function matchAircraft(flightNo, acList) {
   const airline = AIRLINES[flightNo.slice(0, 2)];
   if (!airline) return null;
   const digits = flightNo.replace(/\D/g, "");
-  const wanted = new Set();
+
+  const exact = new Set(airline.callsigns.map((p) => p + digits));
+  const loose = new Set();
   for (const p of airline.callsigns) {
-    wanted.add(p + digits);
-    if (p === "JZA" && digits.length === 4) wanted.add(p + digits.slice(1));
+    if (p === "JZA" && digits.length === 4) loose.add(p + digits.slice(1));
   }
-  let best = null;
-  for (const ac of acList) {
-    const cs = (ac.flight || "").trim().toUpperCase();
-    if (!wanted.has(cs)) continue;
-    if (ac.lat == null || ac.lon == null) continue;
-    if (!best || (ac.seen_pos ?? 99) < (best.seen_pos ?? 99)) best = ac;
-  }
-  return best;
+
+  const pick = (set, requireType) => {
+    let best = null;
+    for (const ac of acList) {
+      const cs = (ac.flight || "").trim().toUpperCase();
+      if (!set.has(cs)) continue;
+      if (ac.lat == null || ac.lon == null) continue;
+      if ((ac.seen_pos ?? 0) > MAX_FIX_AGE_S) continue;      // stale fix
+      // Every scheduled YTZ arrival is a Dash 8 or Embraer; a type mismatch on
+      // an already-fuzzy callsign means it is almost certainly another flight.
+      if (requireType && ac.t && !/^(DH8|E19|E29|E75)/.test(ac.t)) continue;
+      if (!best || (ac.seen_pos ?? 99) < (best.seen_pos ?? 99)) best = ac;
+    }
+    return best;
+  };
+
+  return pick(exact, false) || (loose.size ? pick(loose, true) : null);
 }
 
 /* ===================== the run ===================== */
@@ -322,6 +339,33 @@ const known = new Map((existing || []).map((r) => [r.id, r]));
 const boardEvents = [];
 const nowMin = torontoMinutesNow();
 let rolloverSkips = 0;
+let vetoedLandings = 0;
+
+/* Take a radar reading BEFORE trusting any board status, so a claimed arrival
+   can be checked against where the aircraft physically is. Keyed by flight id.
+   A failed radar fetch yields an empty map, which simply disables the veto —
+   we never block a landing just because radar was unavailable. */
+const radarView = new Map();
+{
+  const acNow = await fetchRadar();
+  if (acNow.length) {
+    for (const r of tracked) {
+      const id = idOf(r);
+      const ac = matchAircraft(r.flight, acNow);
+      if (!ac) continue;
+      const dist = haversineKm({ lat: ac.lat, lon: ac.lon }, YTZ);
+      radarView.set(id, {
+        dist,
+        alt: typeof ac.alt_baro === "number" ? ac.alt_baro : null,
+        grounded: ac.alt_baro === "ground" ||
+          (typeof ac.alt_baro === "number" && ac.alt_baro < 400 && (ac.gs ?? 999) < 80),
+        // seen_pos is seconds since that position was actually observed, so a
+        // long-stale fix can't masquerade as a current one.
+        ageMs: Math.max(0, (ac.seen_pos ?? 0)) * 1000,
+      });
+    }
+  }
+}
 const baseRows = tracked.map((r) => {
   const id = idOf(r);
   const prev = known.get(id);
@@ -357,7 +401,24 @@ const baseRows = tracked.map((r) => {
   // Use the time the AIRPORT publishes in that row, not our own clock. Using
   // now() recorded "when we noticed", so any gap between runs stamped a whole
   // batch of flights with one identical (wrong) time.
-  if (believable && statusLower === "arrived" && prev && !prev.touchdown_at &&
+  // RADAR VETO: the airport board sometimes reports "Arrived" while the
+  // aircraft is demonstrably still in the air. Observed live: PD2132 flagged
+  // arrived while our own radar had it 404 km out at 9,825 ft doing 314 kt;
+  // PD2394 at 212 km / 21,000 ft; PD2726 at 109 km / 21,650 ft. Believing the
+  // board in that situation is exactly the "says Landed but FlightAware says
+  // 15 minutes out" complaint. When two sources contradict each other, trust
+  // the physical observation and withhold the landing rather than guess.
+  const liveTrack = radarView.get(id);
+  const radarSaysAirborne = !!liveTrack && !liveTrack.grounded &&
+    liveTrack.ageMs < 4 * 60_000 && liveTrack.dist > 15;
+  if (radarSaysAirborne && statusLower === "arrived") {
+    vetoedLandings++;
+    console.log(`VETO board-arrived ${r.flight}: radar has it ${Math.round(liveTrack.dist)} km out` +
+      `${liveTrack.alt != null ? ", " + liveTrack.alt + " ft" : ""} ` +
+      `(${Math.round(liveTrack.ageMs / 1000)}s old)`);
+  }
+
+  if (believable && !radarSaysAirborne && statusLower === "arrived" && prev && !prev.touchdown_at &&
       prev.status && prev.status.toLowerCase() !== "arrived") {
     const rowDate = r.day === "Tomorrow" ? tomorrow : serviceDate;
     const reported = torontoLocalToUtcIso(rowDate, r.time);
@@ -377,10 +438,26 @@ const baseRows = tracked.map((r) => {
   }
   return row;
 });
+// SELF-HEAL contradicted landings: a board-sourced arrival recorded while our
+// own telemetry had the aircraft airborne and far away is not a landing. Clear
+// it so the row reverts to an honest "expected" rather than a false "Landed".
+for (const row of baseRows) {
+  const t = radarView.get(row.id);
+  const prev = known.get(row.id);
+  if (!prev || !prev.touchdown_at || prev.touchdown_source !== "board") continue;
+  if (t && !t.grounded && t.ageMs < 4 * 60_000 && t.dist > 15) {
+    row.touchdown_at = null;
+    row.touchdown_source = null;
+    row.touchdown_uncert_s = null;
+    console.log(`CLEARED false board landing ${row.flight_no}: radar ${Math.round(t.dist)} km out`);
+  }
+}
+
 await sbUpsert("flights", baseRows);
 if (boardEvents.length) await sbInsert("flight_events", boardEvents);
 console.log(`synced ${baseRows.length} flight rows` +
-  (rolloverSkips ? ` (${rolloverSkips} rollover status rejected)` : ""));
+  (rolloverSkips ? ` (${rolloverSkips} rollover status rejected)` : "") +
+  (vetoedLandings ? ` (${vetoedLandings} board landings vetoed by radar)` : ""));
 
 // 3a. SELF-HEAL: scrub board-sourced touchdowns that cannot be real. The
 //     midnight-rollover bug wrote a cluster of them; this clears any that
