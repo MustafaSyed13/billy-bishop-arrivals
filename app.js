@@ -1039,7 +1039,7 @@ function renderCancellations() {
   $("cxlCount").textContent = items.length;
   $("cxlEmpty").hidden = !!items.length;
   const btn = $("alertsBtn");
-  btn.innerHTML = `🔔 Alerts${items.length ? ` <span class="btn-badge">${items.length}</span>` : ""}`;
+  btn.innerHTML = `Alerts`;
   btn.classList.toggle("warn", items.length > 0);
   const list = $("cxlList");
   list.hidden = !items.length;
@@ -1138,7 +1138,7 @@ function refreshAlertsBtn() {
   const b = $("notifToggle");
   const on = alertsEnabled();
   b.classList.toggle("on", on);
-  b.textContent = on ? "🔔 On" : "🔕 Off";
+  b.textContent = on ? "On" : "Off";
 }
 
 async function toggleAlerts() {
@@ -1437,6 +1437,16 @@ if ("serviceWorker" in navigator) {
     navigator.serviceWorker.register("sw.js").catch(() => {});
   });
 }
+
+/* Show which build is running. A reviewer asking "is this the version you
+   showed me?" should be able to read the answer off the page. */
+(function stampBuild() {
+  const el = $("buildTag");
+  if (!el) return;
+  const s = document.querySelector('script[src*="app.js"]');
+  const m = s && s.src.match(/[?&]v=(\d+)/);
+  el.textContent = `· Build ${m ? m[1] : "dev"}`;
+})();
 
 bump("opens");
 bump(`opens-${torontoDateKey()}`);

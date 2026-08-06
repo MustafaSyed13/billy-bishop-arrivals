@@ -15,8 +15,8 @@
 <link rel="apple-touch-icon" href="icon-192.png">
 <link rel="preconnect" href="https://raw.githubusercontent.com" crossorigin>
 <link rel="preconnect" href="https://api.airplanes.live" crossorigin>
-<link rel="stylesheet" href="style.css?v=21">
-<script defer src="app.js?v=34"></script>
+<link rel="stylesheet" href="style.css?v=22">
+<script defer src="app.js?v=35"></script>
 </head>
 <body>
 
@@ -78,9 +78,9 @@
     <button class="tab active" id="tabToday" role="tab">Today</button>
     <button class="tab" id="tabTomorrow" role="tab">Tomorrow</button>
   </div>
-  <button class="chip-btn" id="alertsBtn" title="Get a notification when a flight is on final approach and when it lands">🔕 Alerts</button>
-  <button class="chip-btn" id="mapBtn" title="Show inbound aircraft on a live map">🗺 Map</button>
-  <a class="chip-btn" id="sheetBtn" href="sheet.html" target="_blank" rel="noopener" title="Today's arrivals formatted for the morning Excel sheet — copy and paste">📋 Sheet</a>
+  <button class="chip-btn" id="alertsBtn" title="Cancellations and landing notifications">Alerts</button>
+  <button class="chip-btn" id="mapBtn" title="Show inbound aircraft on a live map">Map</button>
+  <a class="chip-btn" id="sheetBtn" href="sheet.html" target="_blank" rel="noopener" title="Today's arrivals formatted for the morning Excel sheet — copy and paste">Daily sheet</a>
   <input type="search" id="search" class="search" placeholder="Search flight or city…" autocomplete="off">
   <div class="freshness" id="freshness">connecting…</div>
 </div>
@@ -88,9 +88,9 @@
 <div class="alerts-panel" id="alertsPanel" hidden>
   <div class="ap-row">
     <span class="ap-label">Landing &amp; cancellation notifications</span>
-    <button class="chip-btn" id="notifToggle">🔕 Off</button>
+    <button class="chip-btn" id="notifToggle">Off</button>
   </div>
-  <div class="ap-head">⚠ U.S. cancellations today — inbound &amp; outbound <span class="cxl-count" id="cxlCount">0</span></div>
+  <div class="ap-head">U.S. cancellations today — inbound &amp; outbound <span class="cxl-count" id="cxlCount">0</span></div>
   <div class="cxl-list" id="cxlList"></div>
   <div class="ap-empty" id="cxlEmpty">No U.S. cancellations so far today. Domestic cancellations are not shown — they do not clear customs.</div>
 </div>
@@ -117,7 +117,7 @@
 </div>
 
 <footer class="foot">
-  <p class="copyright">Unofficial prototype · Public flight information only</p>
+  <p class="copyright">Unofficial prototype · Public flight information only <span class="build" id="buildTag"></span></p>
   <p class="credits">Not affiliated with, endorsed by, or operated by CBSA, PortsToronto, Billy Bishop Toronto City Airport, Porter Airlines or Air Canada. Schedule and status: Billy Bishop public arrivals page. Aircraft positions: airplanes.live public ADS-B network. Arrival times derived from public ADS-B observation are independent estimates, not official airline or airport records. Developed by Mustafa Syed.</p>
 </footer>
 

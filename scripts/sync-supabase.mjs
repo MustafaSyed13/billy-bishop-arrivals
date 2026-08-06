@@ -332,7 +332,7 @@ const idOf = (r) => idMap.get(r);
 // 2. What do we already know? Never overwrite a recorded landing, and never
 //    lose the original schedule once the airport mutates its time cell.
 const existing = await sbFetch(
-  `flights?select=id,sched_local,touchdown_at,touchdown_source,status&service_date=in.(${serviceDate},${tomorrow})`);
+  `flights?select=id,service_date,sched_local,touchdown_at,touchdown_source,status&service_date=in.(${serviceDate},${tomorrow})`);
 const known = new Map((existing || []).map((r) => [r.id, r]));
 
 // 3. Sync schedule + status for every tracked flight.
@@ -506,11 +506,25 @@ if (clears.length || rewrites.length) {
     (DRY_RUN ? " [dry]" : ""));
 }
 
-// 3b. Remove rows for today/tomorrow that are no longer on the airport board
-//     (schedule changed, or left over from an older id scheme). Keeps the
-//     board from showing phantom flights.
+// 3b. Remove rows that are no longer on the airport board — but ONLY ones that
+//     never happened. The airport drops flights from its board a few hours
+//     after they land, so deleting everything absent from the board was
+//     destroying completed flights from history: the collector would wake after
+//     a gap, find the morning's arrivals gone from the board, and erase them.
+//     That is why older days under-count Air Canada. A flight that has an
+//     arrival recorded, or whose scheduled time has already passed, is history
+//     and is never deleted. Only genuinely-removed future flights are cleared.
 const validIds = new Set(tracked.map(idOf));
-const stale = (existing || []).map((r) => r.id).filter((id) => !validIds.has(id));
+const isProtectedHistory = (row) => {
+  if (row.touchdown_at) return true;                     // it happened
+  if ((row.status || "").toLowerCase() === "cancelled") return true;  // it was cancelled
+  if (row.service_date && row.service_date !== serviceDate) return true;  // a past day
+  const s = schedMinutes(row.sched_local);
+  return s !== null && nowMin >= s;                      // its slot has passed
+};
+const stale = (existing || [])
+  .filter((r) => !validIds.has(r.id) && !isProtectedHistory(r))
+  .map((r) => r.id);
 if (stale.length && !DRY_RUN) {
   // One at a time: ids contain '|' and ':' which are awkward to batch safely
   // inside a PostgREST in.() list, and stale rows are only ever a handful.
