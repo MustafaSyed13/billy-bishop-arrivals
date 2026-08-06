@@ -17,10 +17,16 @@ on:
 permissions:
   contents: read
 
-# Never let two runs overlap — that would double-write positions.
+# Each run sweeps for ~4.4 min on a 5 min schedule, so runs routinely overlap.
+# With cancel-in-progress:false GitHub keeps only ONE pending run and cancels
+# older queued ones, so scheduled runs were silently killing each other and
+# leaving multi-hour gaps in coverage. Cancelling the in-progress run instead
+# means the newest data always wins: a superseded sweep has already done its
+# work, all writes are idempotent upserts, and the replacement starts sampling
+# immediately. Freshness beats letting a stale sweep finish.
 concurrency:
   group: supabase-sync
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   sync:
