@@ -191,6 +191,18 @@ function minutesOfDay(hhmm) {
   return m ? +m[1] * 60 + +m[2] : 0;
 }
 
+/* A Toronto wall-clock "HH:MM" today, as an epoch-ms instant. Used so a board
+   arrival is recorded at the time the airport published, not the time we
+   happened to notice the board change. Returns null if it is not a real time or
+   is implausibly far from now (which would mean a date rollover, not an
+   arrival). */
+function todayClockMs(hhmm) {
+  if (!/^\d{1,2}:\d{2}$/.test(String(hhmm || ""))) return null;
+  const diffMin = minutesOfDay(hhmm) - torontoMinutesNow();
+  if (diffMin > 5 || diffMin < -12 * 60) return null;   // future, or yesterday
+  return Date.now() + diffMin * 60_000;
+}
+
 function torontoMinutesNow() {
   const parts = new Intl.DateTimeFormat("en-US", {
     timeZone: "America/Toronto", hour: "2-digit", minute: "2-digit", hour12: false,
@@ -638,11 +650,15 @@ function applyBoard(flights) {
     // Board flipped to "Arrived" while we watch and radar never caught the
     // touchdown -> stamp an approximate ATA at the moment of the flip.
     if (prev && prev !== "arrived" && now === "arrived" && !state.ata[ataKey(f)]) {
-      state.ata[ataKey(f)] = { t: Date.now(), src: "board" };
+      // Use the time the airport published, not the moment we spotted the
+      // change. The board can take several minutes to flip, and charging that
+      // lag to the flight is what made these times read late.
+      const t = todayClockMs(f.time) ?? Date.now();
+      state.ata[ataKey(f)] = { t, src: "board" };
       saveAta();
       state.justLanded.set(f.flight, Date.now());
       notify(`${ataKey(f)}|landed`, `${f.flight} landed at YTZ`,
-        `Airport board marked it arrived at ${fmt12FromDate(new Date())}`);
+        `Airport board marked it arrived at ${fmt12FromDate(new Date(t))}`);
     }
     state.prevStatus.set(key, now);
   }
