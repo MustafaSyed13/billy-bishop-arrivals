@@ -34,6 +34,11 @@ const ADSB_ULTRA_MS = 3_000;      // radar poll cadence with an aircraft on fina
 const ADSB_HIDDEN_INTERVAL_MS = 60_000;
 const STORE_KEY = "ytz-ata-v1";
 const BOARD_CACHE_KEY = "ytz-board-v1";
+// Bumping this discards every locally-stored arrival time. Needed when a bug
+// wrote wrong values, since browsers would otherwise keep showing them all day.
+// v2 clears times recorded before the "must have seen it airborne" rule, which
+// stamped several flights with the moment the page happened to be opened.
+const ATA_EPOCH = "2";
 
 /* Proxies tried in order; the last one that worked is tried first next time.
    jina is asked for raw HTML: the markdown view only carries the airport
@@ -96,6 +101,9 @@ const state = {
   depRaw: [],             // every departure row
   prevArr: new Map(),     // cancellation flip detection, arrivals
   prevDep: new Map(),     // cancellation flip detection, departures
+  seenAirborne: new Map(),// flight -> ms of the last fix showing it airborne. A
+                          // landing time is only claimed for a transition we saw,
+                          // and is interpolated across that bracket.
   cancels: [],            // today's cancellations, freshest source wins
   cancelsAt: 0,           // when that list was observed
   depsFetchedAt: 0,
@@ -206,6 +214,11 @@ function esc(s) {
 /* ---------------- ATA persistence ---------------- */
 function loadAta() {
   try {
+    if (localStorage.getItem(STORE_KEY + "-epoch") !== ATA_EPOCH) {
+      localStorage.removeItem(STORE_KEY);
+      localStorage.setItem(STORE_KEY + "-epoch", ATA_EPOCH);
+      return {};
+    }
     const raw = JSON.parse(localStorage.getItem(STORE_KEY) || "{}");
     const keep = {};
     const today = torontoDateKey(), yesterday = torontoDateKey(-1);
@@ -675,15 +688,32 @@ function ingestAircraft(f, ac) {
     notify(`${ataKey(f)}|final`, `${f.flight} on final approach`,
       `${f.city} to YTZ - about ${mins} min to touchdown`);
   }
-  // Touchdown detection: on the ground within ~4.5 km of the field. The
-  // distance gate also stops a pre-departure aircraft taxiing at its origin
-  // from ever being stamped as landed here.
-  if (grounded && dist <= 4.5 && !state.ata[ataKey(f)]) {
-    state.ata[ataKey(f)] = { t: Date.now(), src: "radar" };
-    saveAta();
-    state.justLanded.set(f.flight, Date.now());
-    notify(`${ataKey(f)}|landed`, `${f.flight} landed at YTZ`,
-      `Touched down at ${fmt12FromDate(new Date())} from ${f.city}`);
+  // Remember that we genuinely saw this aircraft flying. Without this, opening
+  // the page at 13:52 and finding three aircraft already parked stamped all
+  // three as "landed 13:52" — the time WE noticed, not the time they landed.
+  // FlightAware had one of them down at 13:27, a 25 minute error.
+  if (!grounded && (ac.gs ?? 0) > 40) state.seenAirborne.set(f.flight, Date.now());
+
+  // Touchdown detection: an airborne aircraft we were watching is now on the
+  // ground at the field. The distance gate stops a pre-departure aircraft at
+  // its origin counting; the airborne gate stops an aircraft that was already
+  // parked before we ever looked. If we never saw it fly, we do not know when
+  // it landed — so we say nothing and let the airport's own time stand.
+  const airborneAt = state.seenAirborne.get(f.flight);
+  if (grounded && dist <= 4.5 && !state.ata[ataKey(f)] && airborneAt) {
+    // The aircraft came down somewhere between that last airborne fix and now.
+    // Report the midpoint, not "now" — with a 20 s poll that is a handful of
+    // seconds of error, and after a tab has been backgrounded it halves the
+    // gap instead of charging all of it to the flight.
+    const gapMs = Date.now() - airborneAt;
+    if (gapMs <= 10 * 60_000) {
+      const t = airborneAt + gapMs / 2;
+      state.ata[ataKey(f)] = { t, src: "radar" };
+      saveAta();
+      state.justLanded.set(f.flight, Date.now());
+      notify(`${ataKey(f)}|landed`, `${f.flight} landed at YTZ`,
+        `Touched down at ${fmt12FromDate(new Date(t))} from ${f.city}`);
+    }
   }
 }
 

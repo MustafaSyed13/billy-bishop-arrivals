@@ -472,8 +472,42 @@ const repairScan = await sbFetch(
   "flights?select=id,service_date,sched_local,est_local,touchdown_at,touchdown_source&touchdown_at=not.is.null");
 const clears = [];      // impossible -> wipe
 const rewrites = [];    // board-sourced -> restate as the airport's own time
+
+// Find "we noticed them all at once" stamps. Before landings required an
+// observed airborne->ground transition, a run starting after a coverage gap
+// found several aircraft already parked and wrote them all with that sweep's
+// single clock reading — so the bad rows are identical to the millisecond.
+// Two aircraft cannot touch down at the same instant on one runway, so any
+// repeated timestamp is the bug, never a coincidence. Matching exactly (rather
+// than within a window) means genuinely bunched arrivals are never touched.
+const clustered = new Set();
+{
+  const byStamp = new Map();
+  for (const row of (repairScan || [])) {
+    if (!row.touchdown_at) continue;
+    const key = `${row.service_date}|${row.touchdown_at}`;
+    if (!byStamp.has(key)) byStamp.set(key, []);
+    byStamp.get(key).push(row.id);
+  }
+  for (const ids of byStamp.values()) {
+    if (ids.length >= 2) for (const id of ids) clustered.add(id);
+  }
+}
+
 for (const row of (repairScan || [])) {
   if (!row.touchdown_at) continue;
+  if (clustered.has(row.id)) {
+    const reported = row.est_local ? torontoLocalToUtcIso(row.service_date, row.est_local) : null;
+    if (reported && touchdownPlausible(row.sched_local, reported)) {
+      // Already restated on an earlier run: leave it be rather than re-PATCHing
+      // the same value every five minutes.
+      if (reported !== row.touchdown_at) rewrites.push({ id: row.id, touchdown_at: reported });
+    } else {
+      console.log(`clearing clustered observe-time landing ${row.id} td=${row.touchdown_at}`);
+      clears.push(row.id);
+    }
+    continue;
+  }
   if (!touchdownPlausible(row.sched_local, row.touchdown_at)) {
     console.log(`clearing ${row.id} (${row.touchdown_source}) sched=${row.sched_local} td=${row.touchdown_at}`);
     clears.push(row.id);
@@ -498,7 +532,7 @@ if (!DRY_RUN) {
   }
   for (const rw of rewrites) {
     await sbPatch("flights", `id=eq.${encodeURIComponent(rw.id)}`,
-      { touchdown_at: rw.touchdown_at, touchdown_uncert_s: 600 });
+      { touchdown_at: rw.touchdown_at, touchdown_source: "board", touchdown_uncert_s: 600 });
   }
 }
 if (clears.length || rewrites.length) {
@@ -584,7 +618,13 @@ try {
 
 // 4. Sweep radar repeatedly for the rest of this run.
 const deadline = Date.now() + RUN_MS;
-let sweeps = 0, landings = 0;
+let sweeps = 0, landings = 0, unobservedArrivals = 0;
+// id -> ms timestamp of the last fix showing this aircraft airborne.
+const lastAirborneAt = new Map();
+// Widest airborne->ground bracket we will still convert into a touchdown time.
+// Beyond this the midpoint is a guess, and a guess is worse than the airport's
+// own published time.
+const MAX_LANDING_GAP_MS = 10 * 60_000;
 
 while (Date.now() < deadline) {
   const acList = await fetchRadar();
@@ -592,7 +632,7 @@ while (Date.now() < deadline) {
 
   // Re-read just what's needed so a landing is never recorded twice.
   const cur = await sbFetch(
-    `flights?select=id,touchdown_at&service_date=eq.${serviceDate}`);
+    `flights?select=id,touchdown_at,last_alt_ft,last_gs_kt,last_seen_at&service_date=eq.${serviceDate}`);
   const curMap = new Map((cur || []).map((r) => [r.id, r]));
 
   const updates = [];
@@ -634,18 +674,55 @@ while (Date.now() < deadline) {
       row.eta_predicted_at = new Date(Date.now() + minsOut * 60_000).toISOString();
     }
 
-    // THE LANDING DECISION: on the ground AND at this airport. The distance
-    // test is what stops a plane taxiing at Newark being called "landed".
-    if (grounded && dist <= 4.5) {
-      row.touchdown_at = nowIso;
-      row.touchdown_source = "adsb";
-      row.touchdown_uncert_s = Math.round(SWEEP_MS / 2000);
-      events.push({
-        flight_id: id, event_type: "landed",
-        detail: { source: "adsb", dist_km: Number(dist.toFixed(2)), reg: ac.r ?? null },
-      });
-      landings++;
-      console.log(`LANDED ${r.flight} at ${nowIso} (${dist.toFixed(1)} km)`);
+    // Remember the last moment this aircraft was definitely still flying. That
+    // instant, paired with the first moment it is definitely down, brackets the
+    // real touchdown. Evidence carries across runs: the previous run's stored
+    // telemetry proves the aircraft was airborne when it was last written.
+    const prevRow = curMap.get(id);
+    if (!grounded && (ac.gs ?? 0) > 40) {
+      lastAirborneAt.set(id, Date.now());
+    } else if (!lastAirborneAt.has(id) && prevRow?.last_seen_at &&
+               ((prevRow.last_alt_ft ?? 0) > 1500 || (prevRow.last_gs_kt ?? 0) > 120)) {
+      lastAirborneAt.set(id, Date.parse(prevRow.last_seen_at) || 0);
+    }
+
+    // THE LANDING DECISION: an aircraft we watched flying is now on the ground
+    // at this airport. Each gate stops a failure we actually hit:
+    //   grounded        - it is down
+    //   dist <= 4.5     - down HERE, not taxiing at Newark before departure
+    //   airborneAt      - we witnessed it flying, so this really is a landing
+    //                     and not just the first time we looked. Without this,
+    //                     a collector run starting after a coverage gap found
+    //                     several aircraft already parked and stamped them all
+    //                     "landed now" — how three flights ended up sharing one
+    //                     wrong time about 25 minutes after they really landed.
+    const airborneAt = lastAirborneAt.get(id);
+    if (grounded && dist <= 4.5 && airborneAt) {
+      // Touchdown happened between the last airborne fix and now. Take the
+      // midpoint rather than "now": with 15 s sweeps that is a few seconds of
+      // error, and across a run boundary it halves the error instead of
+      // charging the whole gap to the flight.
+      const gapMs = Date.now() - airborneAt;
+      if (gapMs > MAX_LANDING_GAP_MS) {
+        // Too coarse to call. The airport's published time beats a guess.
+        unobservedArrivals++;
+      } else {
+        const td = new Date(airborneAt + gapMs / 2).toISOString();
+        row.touchdown_at = td;
+        row.touchdown_source = "adsb";
+        row.touchdown_uncert_s = Math.round(gapMs / 2000);
+        events.push({
+          flight_id: id, event_type: "landed",
+          detail: { source: "adsb", dist_km: Number(dist.toFixed(2)), reg: ac.r ?? null,
+                    bracket_s: Math.round(gapMs / 1000) },
+        });
+        landings++;
+        console.log(`LANDED ${r.flight} at ${td} (${dist.toFixed(1)} km, ±${Math.round(gapMs / 2000)}s)`);
+      }
+    } else if (grounded && dist <= 4.5) {
+      // On the ground here, but we never saw it fly: the airport's published
+      // time is the honest answer, not our observation time.
+      unobservedArrivals++;
     }
     updates.push(row);
   }
@@ -693,4 +770,5 @@ while (Date.now() < deadline) {
   else break;
 }
 
-console.log(`done: ${sweeps} radar sweeps, ${landings} landings recorded`);
+console.log(`done: ${sweeps} radar sweeps, ${landings} landings recorded` +
+  (unobservedArrivals ? `, ${unobservedArrivals} arrivals left to the board (no observed transition)` : ""));
