@@ -102,8 +102,66 @@ a.chip-btn { text-decoration: none; display: inline-flex; align-items: center; }
 .cxl-item .was { font-family: var(--mono); color: #9a6b00; font-size: 13px; }
 
 /* ---------- live map ---------- */
-.map-wrap { margin: 0 28px 14px; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; box-shadow: 0 2px 8px rgba(23, 33, 46, .06); }
+.map-wrap { position: relative; margin: 0 28px 14px; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; box-shadow: 0 2px 8px rgba(23, 33, 46, .06); }
 #map { height: 450px; background: #dde6ed; }
+
+/* ---------- selected-aircraft panel ----------
+   Sits over the map rather than beside it, so opening it never reflows the
+   map and forces Leaflet to re-render. */
+.ac-panel {
+  position: absolute; top: 0; left: 0; bottom: 0; width: 310px; max-width: 82%;
+  z-index: 900; background: var(--panel);
+  border-right: 1px solid var(--line);
+  box-shadow: 3px 0 14px rgba(14, 42, 71, .16);
+  overflow-y: auto; overscroll-behavior: contain;
+  animation: acSlide .18s ease-out;
+}
+@keyframes acSlide { from { transform: translateX(-100%); } to { transform: none; } }
+@media (prefers-reduced-motion: reduce) { .ac-panel { animation: none; } }
+
+.ac-close {
+  position: absolute; top: 8px; right: 8px; z-index: 2;
+  width: 28px; height: 28px; line-height: 1; font-size: 20px;
+  border: 1px solid var(--line); border-radius: 6px;
+  background: #fff; color: var(--dim); cursor: pointer;
+}
+.ac-close:hover { background: var(--row-hover); color: var(--text); }
+
+.ac-head { padding: 14px 44px 12px 16px; background: linear-gradient(180deg, #123458 0%, var(--navy) 100%); color: #fff; }
+.ac-cs { font-family: var(--mono); font-size: 20px; font-weight: 700; letter-spacing: 1px; }
+.ac-sub { font-size: 12px; opacity: .82; margin-top: 3px; }
+.ac-type { display: inline-block; margin-top: 7px; padding: 2px 7px; border-radius: 4px;
+  background: rgba(255, 255, 255, .16); font-family: var(--mono); font-size: 11px; }
+
+.ac-route { display: flex; align-items: center; gap: 10px; padding: 14px 16px 8px; }
+.ac-port { text-align: center; flex: 1; min-width: 0; }
+.ac-port .code { font-family: var(--mono); font-size: 21px; font-weight: 700; color: var(--navy); }
+.ac-port .city { font-size: 11px; color: var(--dim); margin-top: 2px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ac-arrow { flex: none; color: var(--amber); font-size: 17px; }
+
+/* Distance-flown bar. Width is set inline from live telemetry. */
+.ac-bar { margin: 4px 16px 12px; height: 4px; border-radius: 2px; background: var(--line); position: relative; }
+.ac-bar > i { position: absolute; inset: 0 auto 0 0; border-radius: 2px; background: var(--amber); }
+.ac-barnote { display: flex; justify-content: space-between; margin: -8px 16px 12px; font-size: 10.5px; color: var(--faint); }
+
+.ac-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; background: var(--line-soft); border-top: 1px solid var(--line-soft); }
+.ac-cell { background: var(--panel); padding: 9px 16px; }
+.ac-cell .k { font-size: 10px; letter-spacing: .5px; text-transform: uppercase; color: var(--faint); }
+.ac-cell .v { font-family: var(--mono); font-size: 14px; margin-top: 2px; color: var(--text); }
+.ac-cell .v.big { font-size: 16px; font-weight: 700; }
+.ac-cell .v.green { color: var(--green); }
+
+.ac-links { display: flex; gap: 8px; padding: 12px 16px 16px; }
+.ac-links a {
+  flex: 1; text-align: center; padding: 7px 4px; border-radius: 6px;
+  border: 1px solid var(--line); font-size: 12px; font-weight: 600;
+  color: var(--blue); background: #fff;
+}
+.ac-links a:hover { background: var(--row-hover); text-decoration: none; }
+.ac-note { padding: 0 16px 14px; font-size: 10.5px; color: var(--faint); line-height: 1.45; }
+.plane-svg { cursor: pointer; }
+.plane-svg.selected path { stroke: var(--amber); stroke-width: 2.4; }
 .leaflet-container { background: #dde6ed; font-family: var(--sans); }
 .plane-svg {
   width: 30px; height: 30px; display: block;
@@ -211,6 +269,8 @@ tr.detail td {
   .freshness { flex-basis: 100%; text-align: left; margin-left: 0; }
   .map-wrap { margin: 0 10px 10px; }
   #map { height: 320px; }
+  /* On a phone the panel takes the full map rather than squeezing beside it. */
+  .ac-panel { width: 100%; max-width: none; }
   .alerts-panel { margin: 4px 10px 10px; }
   .board-wrap { padding: 0 10px 20px; }
   .board { min-width: 0; }

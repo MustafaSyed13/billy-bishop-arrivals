@@ -15,8 +15,8 @@
 <link rel="apple-touch-icon" href="icon-192.png">
 <link rel="preconnect" href="https://raw.githubusercontent.com" crossorigin>
 <link rel="preconnect" href="https://api.airplanes.live" crossorigin>
-<link rel="stylesheet" href="style.css?v=22">
-<script defer src="app.js?v=36"></script>
+<link rel="stylesheet" href="style.css?v=23">
+<script defer src="app.js?v=37"></script>
 </head>
 <body>
 
@@ -95,7 +95,14 @@
   <div class="ap-empty" id="cxlEmpty">No U.S. cancellations so far today. Domestic cancellations are not shown — they do not clear customs.</div>
 </div>
 
-<div class="map-wrap" id="mapWrap" hidden><div id="map"></div></div>
+<div class="map-wrap" id="mapWrap" hidden>
+  <div id="map"></div>
+  <!-- Detail panel for the selected aircraft. Hidden until a plane is clicked. -->
+  <aside class="ac-panel" id="acPanel" hidden aria-live="polite">
+    <button class="ac-close" id="acClose" type="button" aria-label="Close aircraft details">&times;</button>
+    <div id="acPanelBody"></div>
+  </aside>
+</div>
 
 <div class="board-wrap">
   <div class="banner" id="banner" hidden></div>

@@ -974,6 +974,28 @@ function faIdent(f) {
   return (f.airlineCls === "pd" ? "POE" : "JZA") + f.flight.replace(/\D/g, "");
 }
 
+/* Flightradar24 has two different pages, and sending people to the wrong one is
+   why the link "went to history instead of the flight".
+
+     /data/flights/pd2938   flight HISTORY - past dates, no live aircraft
+     /PTR2938               the LIVE map, aircraft selected
+
+   The live page is keyed on the CALLSIGN the transponder is broadcasting, not
+   the marketing flight number, and the two differ. Porter uses two blocks:
+   PTR for the Dash 8 turboprops and POE for the Embraer E195-E2 jets, so the
+   prefix cannot be assumed from the airline either. We already receive the real
+   callsign over ADS-B, so use that and stop guessing.
+
+   When nothing is in the air, the history page IS the correct destination -
+   a live map link for a flight that is not flying shows an empty map. */
+function fr24Url(f) {
+  const s = state.aircraft.get(f.flight);
+  const live = s && s.cs && !s.grounded && Date.now() - s.ts < 120_000;
+  return live
+    ? `https://www.flightradar24.com/${encodeURIComponent(s.cs)}`
+    : `https://www.flightradar24.com/data/flights/${encodeURIComponent(f.flight.toLowerCase())}`;
+}
+
 function render() {
   const rows = $("rows");
   const q = state.search.trim().toLowerCase();
@@ -1010,7 +1032,7 @@ function render() {
     html += `
 <tr class="${rowCls.join(" ")}" data-flight="${esc(f.flight)}">
   <td class="sched" title="${esc(v.schedSrc)}">${v.schedTxt}</td>
-  <td class="flightno"><a href="https://www.flightaware.com/live/flight/${esc(faIdent(f))}" target="_blank" rel="noopener noreferrer" title="Track ${esc(f.flight)} on FlightAware">${esc(f.flight)}</a><a class="fr-badge" href="https://www.flightradar24.com/data/flights/${esc(f.flight.toLowerCase())}" target="_blank" rel="noopener noreferrer" title="Track ${esc(f.flight)} on Flightradar24">FR24</a></td>
+  <td class="flightno"><a href="https://www.flightaware.com/live/flight/${esc(faIdent(f))}" target="_blank" rel="noopener noreferrer" title="Track ${esc(f.flight)} on FlightAware">${esc(f.flight)}</a><a class="fr-badge" href="${esc(fr24Url(f))}" target="_blank" rel="noopener noreferrer" title="Track ${esc(f.flight)} on Flightradar24">FR24</a></td>
   <td class="airline"><svg class="airline-logo ${f.airlineCls}" role="img" aria-label="${esc(f.airline)}"><use href="#${f.airlineCls === "pd" ? "porter-logo" : "aircanada-logo"}"></use></svg></td>
   <td class="from"><span class="code">${esc(f.code)}</span><span class="city">${esc(f.city)}</span></td>
   <td class="eta${v.etaLive ? " live" : ""}${v.ataApprox ? " approx" : ""}${v.statusCls === "cancelled" ? " cxl" : ""}"><span class="eta-main">${esc(v.etaMain)}</span>${v.etaSub ? `<span class="eta-note">${esc(v.etaSub)}</span>` : ""}</td>
@@ -1260,7 +1282,7 @@ function updateMap() {
     const rot = Math.round(s.track || 0);
     const icon = L.divIcon({
       className: "",
-      html: `<svg class="plane-svg ${f.airlineCls}" viewBox="0 0 24 24" style="transform:rotate(${rot}deg)"><path d="${PLANE_PATH}"/></svg>`,
+      html: `<svg class="plane-svg ${f.airlineCls}${state.focus === f.flight ? " selected" : ""}" viewBox="0 0 24 24" style="transform:rotate(${rot}deg)"><path d="${PLANE_PATH}"/></svg>`,
       iconSize: [30, 30], iconAnchor: [15, 15],
     });
     let tip = `${f.flight} · ${Math.round(s.dist)} km`;
@@ -1274,19 +1296,102 @@ function updateMap() {
     } else {
       mapMarkers[f.flight] = L.marker([s.lat, s.lon], { icon })
         .addTo(map)
-        .bindTooltip(tip, { permanent: true, direction: "right", offset: [12, 0], className: "plane-label" });
+        .bindTooltip(tip, { permanent: true, direction: "right", offset: [12, 0], className: "plane-label" })
+        // Clicking an aircraft opens the detail panel, the way Flightradar24
+        // does it. Bound once at creation, not on every refresh, so the handler
+        // is not re-registered 3 times a second while a flight is on final.
+        .on("click", () => selectAircraft(f.flight));
     }
   }
   for (const k of Object.keys(mapMarkers)) {
     if (!seen.has(k)) { map.removeLayer(mapMarkers[k]); delete mapMarkers[k]; }
   }
   drawFocusRoute();
+  renderAcPanel();          // keep the open panel's live numbers current
   // Re-frame only when the set of tracked planes changes, so user panning sticks.
   const key = [...seen].sort().join(",") + (state.focus || "");
   if (key !== lastMapKey) {
     lastMapKey = key;
     if (!state.focus && pts.length > 1) map.fitBounds(pts, { padding: [28, 28], maxZoom: 9 });
   }
+}
+
+/* ---------------- selected-aircraft panel ----------------
+   Clicking a plane opens a detail panel over the map, the way Flightradar24
+   does, instead of relying on the small tooltip label. */
+function selectAircraft(flightNo) {
+  state.focus = state.focus === flightNo ? null : flightNo;
+  lastMapKey = "";                     // let the map re-frame on the new focus
+  renderAcPanel();
+  updateMap();
+  const s = state.aircraft.get(state.focus);
+  if (state.focus && s && s.lat != null) map.panTo([s.lat, s.lon], { animate: true });
+}
+
+function closeAcPanel() {
+  state.focus = null;
+  renderAcPanel();
+  updateMap();
+}
+
+/* Rendered fresh on every radar tick so the numbers stay live while open. */
+function renderAcPanel() {
+  const panel = $("acPanel"), body = $("acPanelBody");
+  if (!panel || !body) return;
+  const fNo = state.focus;
+  const f = fNo && state.flights.find((x) => x.flight === fNo && x.day === "Today");
+  const s = fNo && state.aircraft.get(fNo);
+  if (!f || !s || s.lat == null) { panel.hidden = true; return; }
+
+  const v = viewOf(f);
+  const kmh = s.gs != null ? Math.round(s.gs * 1.852) : null;
+  const altTxt = typeof s.alt === "number" ? `${s.alt.toLocaleString()} ft`
+    : s.grounded ? "on ground" : "—";
+
+  // Distance flown, as a fraction of the whole route. Only meaningful when we
+  // know where it started, so the bar is dropped rather than faked otherwise.
+  let bar = "";
+  if (f.olat != null) {
+    const total = haversineKm({ lat: f.olat, lon: f.olon }, YTZ);
+    const pct = total > 0 ? Math.max(0, Math.min(100, ((total - s.dist) / total) * 100)) : 0;
+    bar = `<div class="ac-bar"><i style="width:${pct.toFixed(1)}%"></i></div>
+      <div class="ac-barnote"><span>${Math.round(total - s.dist)} km flown</span>
+      <span>${Math.round(s.dist)} km to run</span></div>`;
+  }
+
+  // Same arithmetic the board row uses, so the panel can never disagree with it.
+  const etaCell = v.ataTxt !== "—"
+    ? `<div class="ac-cell"><div class="k">Actual arrival</div><div class="v big green">${esc(v.ataTxt)}</div></div>`
+    : `<div class="ac-cell"><div class="k">Expected</div><div class="v big">${esc(v.etaMain)}</div></div>`;
+
+  body.innerHTML = `
+    <div class="ac-head">
+      <div class="ac-cs">${esc(s.cs || f.flight)}</div>
+      <div class="ac-sub">${esc(f.flight)} · ${esc(f.airline)}</div>
+      <span class="ac-type">${esc(s.type)} · ${esc(s.reg)}</span>
+    </div>
+    <div class="ac-route">
+      <div class="ac-port"><div class="code">${esc(f.code || "—")}</div>
+        <div class="city">${esc(f.city || "")}</div></div>
+      <div class="ac-arrow">&#9992;</div>
+      <div class="ac-port"><div class="code">YTZ</div><div class="city">Toronto City</div></div>
+    </div>
+    ${bar}
+    <div class="ac-grid">
+      <div class="ac-cell"><div class="k">Scheduled</div><div class="v">${esc(v.schedTxt)}</div></div>
+      ${etaCell}
+      <div class="ac-cell"><div class="k">Altitude</div><div class="v">${esc(altTxt)}</div></div>
+      <div class="ac-cell"><div class="k">Speed</div><div class="v">${kmh != null ? kmh + " km/h" : "—"}</div></div>
+      <div class="ac-cell"><div class="k">Distance</div><div class="v">${Math.round(s.dist)} km</div></div>
+      <div class="ac-cell"><div class="k">Status</div><div class="v">${esc(v.statusTxt)}</div></div>
+    </div>
+    <div class="ac-links">
+      <a href="${esc(fr24Url(f))}" target="_blank" rel="noopener noreferrer">Flightradar24</a>
+      <a href="https://www.flightaware.com/live/flight/${esc(faIdent(f))}" target="_blank" rel="noopener noreferrer">FlightAware</a>
+    </div>
+    <div class="ac-note">${esc(v.etaSub || v.ataNote || "")}<br>
+      Position from ADS-B, updated ${esc(ago(s.ts))}.</div>`;
+  panel.hidden = false;
 }
 
 /* Route for the focused flight: solid = flown (origin to plane),
@@ -1340,6 +1445,11 @@ function setTab(tab) {
   render();
 }
 
+$("acClose").addEventListener("click", closeAcPanel);
+// Escape closes the panel, matching how every other overlay on the web behaves.
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && state.focus) closeAcPanel();
+});
 $("tabToday").addEventListener("click", () => setTab("Today"));
 $("tabTomorrow").addEventListener("click", () => setTab("Tomorrow"));
 $("alertsBtn").addEventListener("click", () => {
