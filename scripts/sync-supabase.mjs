@@ -31,7 +31,17 @@ const DEPARTURES_URL = "https://www.billybishopairport.com/flights/departures/";
 const ADSB_URL = "https://api.airplanes.live/v2/point/43.6275/-79.3962/250";
 
 const YTZ = { lat: 43.6275, lon: -79.3962 };
-const RUN_MS = process.env.DRY_RUN === "1" ? 20_000 : 265_000;  // ~4.4 min, then next run takes over
+/* HOW LONG ONE RUN KEEPS SWEEPING.
+   This used to be 4.4 minutes, on the assumption that the 5-minute schedule
+   would start the next run straight after. It does not: GitHub throttles
+   scheduled workflows hard, and in practice runs fire every 45-90 minutes. The
+   result was roughly 6% radar coverage, so most landings were never observed
+   and fell back to the airport's published gate time - about 8 minutes later
+   than the actual touchdown.
+   Sweeping for ~3 hours means coverage is continuous even at the worst
+   observed spacing. Actions is free and unlimited on public repos, and
+   cancel-in-progress means a fresh run simply replaces this one. */
+const RUN_MS = process.env.DRY_RUN === "1" ? 20_000 : 175 * 60_000;
 const SWEEP_MS = 15_000;  // radar sample every 15 s
 const UA = "syedsgroup-ytz-board/1.0 (+ops dashboard)";
 
@@ -308,26 +318,38 @@ if (arrRows.length < 5) {
 }
 console.log(`parsed ${arrRows.length} arrivals, ${depRows.length} departures`);
 
-// Only U.S.-origin Porter / Air Canada arrivals get tracked.
-const tracked = arrRows.filter((r) =>
-  AIRLINES[r.flight.slice(0, 2)] && originInfo(r.origin) &&
-  (r.day === "Today" || r.day === "Tomorrow"));
-
 /* A flight's id must NEVER change, or a delay would create a second row
    instead of updating the first. So the id must not contain the time (the
    airport rewrites that when a flight slips). Instead: date + flight number +
    which occurrence it is that day, since a few flight numbers genuinely fly
-   twice in one day (e.g. PD2120 morning and afternoon). */
-const occurrence = new Map();
-const idMap = new Map();                      // board row -> stable id
-for (const r of tracked) {
-  const date = r.day === "Tomorrow" ? tomorrow : serviceDate;
-  const key = `${date}|${r.flight}`;
-  const n = occurrence.get(key) ?? 0;
-  occurrence.set(key, n + 1);
-  idMap.set(r, `${key}|${n}`);
-}
+   twice in one day (e.g. PD2120 morning and afternoon).
+
+   Rebuilt whenever the board is re-read: a run now lasts hours, and the board
+   gains and loses flights during it. The ids stay stable across rebuilds
+   because they are derived from the date and flight number, not from position
+   in the list. */
+let idMap = new Map();                        // board row -> stable id
 const idOf = (r) => idMap.get(r);
+
+// Only U.S.-origin Porter / Air Canada arrivals get tracked.
+function selectTracked(rows) {
+  const list = rows.filter((r) =>
+    AIRLINES[r.flight.slice(0, 2)] && originInfo(r.origin) &&
+    (r.day === "Today" || r.day === "Tomorrow"));
+  const occurrence = new Map();
+  const map = new Map();
+  for (const r of list) {
+    const date = r.day === "Tomorrow" ? tomorrow : serviceDate;
+    const key = `${date}|${r.flight}`;
+    const n = occurrence.get(key) ?? 0;
+    occurrence.set(key, n + 1);
+    map.set(r, `${key}|${n}`);
+  }
+  idMap = map;
+  return list;
+}
+
+let tracked = selectTracked(arrRows);
 
 // 2. What do we already know? Never overwrite a recorded landing, and never
 //    lose the original schedule once the airport mutates its time cell.
@@ -626,7 +648,41 @@ const lastAirborneAt = new Map();
 // own published time.
 const MAX_LANDING_GAP_MS = 10 * 60_000;
 
+/* A run now spans hours, so two things that were safe for a 4-minute run are
+   no longer safe:
+     - the flight list goes stale as the airport adds and drops flights
+     - the service date can roll over past midnight
+   The board is therefore re-read periodically, and the process exits on a date
+   change so the next run starts cleanly rather than writing tomorrow's flights
+   against today's date. */
+const BOARD_REFRESH_MS = 4 * 60_000;
+let nextBoardRefresh = Date.now() + BOARD_REFRESH_MS;
+
 while (Date.now() < deadline) {
+  if (Date.now() >= nextBoardRefresh) {
+    nextBoardRefresh = Date.now() + BOARD_REFRESH_MS;
+    if (torontoDate() !== serviceDate) {
+      console.log(`service date rolled over (${serviceDate} -> ${torontoDate()}); ending run`);
+      break;
+    }
+    try {
+      const rows = parseRows(await fetchPage(ARRIVALS_URL));
+      // Same guard as startup: a short parse means the page is broken or
+      // blocking us, and replacing a good list with it would stop tracking.
+      if (rows.length >= 5) {
+        const before = tracked.length;
+        tracked = selectTracked(rows);
+        if (tracked.length !== before) {
+          console.log(`board refreshed: ${before} -> ${tracked.length} tracked flights`);
+        }
+      } else {
+        console.log(`board refresh skipped: only ${rows.length} rows parsed`);
+      }
+    } catch (e) {
+      console.log(`board refresh failed, keeping previous list: ${e.message}`);
+    }
+  }
+
   const acList = await fetchRadar();
   sweeps++;
 

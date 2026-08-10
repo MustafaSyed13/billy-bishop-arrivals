@@ -6,7 +6,11 @@ name: supabase-sync
 
 on:
   schedule:
-    - cron: "*/5 * * * *"
+    # Every 30 min. Each run sweeps for ~3 h and cancel-in-progress replaces the
+    # previous one, so coverage is continuous whether GitHub honours this
+    # schedule or throttles it to 90 minutes. A tighter cron would only restart
+    # a healthy run and lose ~30 s to checkout each time.
+    - cron: "*/30 * * * *"
   workflow_dispatch:
     inputs:
       dry_run:
@@ -31,7 +35,11 @@ concurrency:
 jobs:
   sync:
     runs-on: ubuntu-latest
-    timeout-minutes: 8
+    # Each run sweeps radar for ~3 hours (see RUN_MS). Actions is free and
+    # unlimited on public repos, so a long job costs nothing and is the only
+    # way to get continuous coverage out of a schedule GitHub throttles to
+    # every 45-90 minutes.
+    timeout-minutes: 185
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
