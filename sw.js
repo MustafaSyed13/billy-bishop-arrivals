@@ -7,7 +7,11 @@
    CacheStorage is shared across the whole GitHub Pages origin, so this app
    uses its own "bba-" prefix and only ever deletes its own old caches. */
 
-const CACHE = "bba-shell-v13";
+/* BUMP THIS on every release that changes app code. On activate we delete every
+   other "bba-" cache, so one reload wipes stale copies. Bumping the ?v= on the
+   script tag alone is NOT enough: it only helps once the browser has a fresh
+   index.html to read the new URL from. */
+const CACHE = "bba-shell-v14";
 const LEGACY_CACHES = ["ytz-shell-v8"];
 const SHELL = ["index.html", "manifest.json", "icon-192.png", "icon-512.png"];
 
@@ -67,8 +71,24 @@ self.addEventListener("fetch", (e) => {
     return;
   }
 
+  // Our own code is network-first. Stale-while-revalidate served the cached
+  // copy and only refreshed it in the background, so a release did not reach
+  // anyone until their SECOND reload - which is why fixes appeared to not ship.
+  // Icons and the manifest stay cache-first; they rarely change and are the
+  // ones worth having instantly offline.
+  const isAppCode = /\.(?:js|css|html)$/.test(url.pathname);
+
   e.respondWith(
     caches.open(CACHE).then(async (c) => {
+      if (isAppCode) {
+        try {
+          const fresh = await fetch(e.request);
+          if (fresh && fresh.ok) { c.put(e.request, fresh.clone()); return fresh; }
+          throw new Error("asset " + (fresh && fresh.status));
+        } catch {
+          return (await c.match(e.request)) || Response.error();
+        }
+      }
       const cached = await c.match(e.request);
       const fresh = fetch(e.request)
         .then((res) => {

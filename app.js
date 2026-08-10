@@ -990,8 +990,13 @@ function faIdent(f) {
    a live map link for a flight that is not flying shows an empty map. */
 function fr24Url(f) {
   const s = state.aircraft.get(f.flight);
-  const live = s && s.cs && !s.grounded && Date.now() - s.ts < 120_000;
-  return live
+  // Use the callsign page whenever we have actually seen this aircraft recently,
+  // airborne or just down. Flightradar24 keeps a flight selectable for a while
+  // after landing, so this still lands on the flight itself rather than the
+  // archive. Only when we have no recent sighting at all is the history page
+  // the only thing that exists to link to.
+  const seenRecently = s && s.cs && Date.now() - s.ts < 45 * 60_000;
+  return seenRecently
     ? `https://www.flightradar24.com/${encodeURIComponent(s.cs)}`
     : `https://www.flightradar24.com/data/flights/${encodeURIComponent(f.flight.toLowerCase())}`;
 }
