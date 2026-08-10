@@ -860,7 +860,10 @@ function viewOf(f) {
     schedSrc: f.schedSrc === "feed" ? "original published schedule"
       : f.schedSrc === "tomorrow_snapshot" ? "captured from yesterday's schedule"
       : "schedule as first published",
-    etaMain: fmt12(f.time), etaSub: "", etaLive: false,
+    // etaMain is the countdown when one is useful; etaClock is the same moment
+    // as a wall-clock time, shown beside it so the sheet can be filled in
+    // without doing the arithmetic. Empty when etaMain is already a clock time.
+    etaMain: fmt12(f.time), etaClock: "", etaSub: "", etaLive: false,
     ataTxt: "—", ataNote: "", ataApprox: false,
     statusTxt: f.status, statusCls: "ontime",
     ac: acFresh ? ac : null,
@@ -939,7 +942,8 @@ function viewOf(f) {
     // clock time is easier to plan around than "in 3 h 41 m".
     if (remain < 60) {
       v.etaMain = fmtDur(remain);
-      v.etaSub = `${clock} · ADS-B prediction ${unc} · ${Math.round(ac.dist)} km out`;
+      v.etaClock = clock;
+      v.etaSub = `ADS-B prediction ${unc} · ${Math.round(ac.dist)} km out`;
     } else {
       v.etaMain = clock;
       v.etaSub = `ADS-B prediction ${unc} · ${Math.round(ac.dist)} km out`;
@@ -953,9 +957,10 @@ function viewOf(f) {
     const clock = fmt12(f.time);
     if (dm >= -2 && dm < 60) {
       v.etaMain = fmtDur(dm);
+      v.etaClock = clock;
       v.etaSub = acFresh && ac.grounded && ac.dist > 60
-        ? `${clock} · on the ground at ${f.code}`
-        : `${clock} · Airport estimate`;
+        ? `on the ground at ${f.code}`
+        : `Airport estimate`;
     } else {
       v.etaMain = clock;
       v.etaSub = acFresh && ac.grounded && ac.dist > 60
@@ -1040,7 +1045,7 @@ function render() {
   <td class="flightno"><a href="https://www.flightaware.com/live/flight/${esc(faIdent(f))}" target="_blank" rel="noopener noreferrer" title="Track ${esc(f.flight)} on FlightAware">${esc(f.flight)}</a><a class="fr-badge" href="${esc(fr24Url(f))}" target="_blank" rel="noopener noreferrer" title="Track ${esc(f.flight)} on Flightradar24">FR24</a></td>
   <td class="airline"><svg class="airline-logo ${f.airlineCls}" role="img" aria-label="${esc(f.airline)}"><use href="#${f.airlineCls === "pd" ? "porter-logo" : "aircanada-logo"}"></use></svg></td>
   <td class="from"><span class="code">${esc(f.code)}</span><span class="city">${esc(f.city)}</span></td>
-  <td class="eta${v.etaLive ? " live" : ""}${v.ataApprox ? " approx" : ""}${v.statusCls === "cancelled" ? " cxl" : ""}"><span class="eta-main">${esc(v.etaMain)}</span>${v.etaSub ? `<span class="eta-note">${esc(v.etaSub)}</span>` : ""}</td>
+  <td class="eta${v.etaLive ? " live" : ""}${v.ataApprox ? " approx" : ""}${v.statusCls === "cancelled" ? " cxl" : ""}"><span class="eta-main">${esc(v.etaMain)}</span>${v.etaClock ? `<span class="eta-clock">${esc(v.etaClock)}</span>` : ""}${v.etaSub ? `<span class="eta-note">${esc(v.etaSub)}</span>` : ""}</td>
   <td class="status"><span class="chip ${v.statusCls}">${esc(v.statusTxt)}</span></td>
 
 </tr>`;
@@ -1367,7 +1372,8 @@ function renderAcPanel() {
   // Same arithmetic the board row uses, so the panel can never disagree with it.
   const etaCell = v.ataTxt !== "—"
     ? `<div class="ac-cell"><div class="k">Actual arrival</div><div class="v big green">${esc(v.ataTxt)}</div></div>`
-    : `<div class="ac-cell"><div class="k">Expected</div><div class="v big">${esc(v.etaMain)}</div></div>`;
+    : `<div class="ac-cell"><div class="k">Expected</div><div class="v big">${esc(v.etaMain)}${
+        v.etaClock ? ` <span style="font-weight:400;color:var(--dim)">${esc(v.etaClock)}</span>` : ""}</div></div>`;
 
   body.innerHTML = `
     <div class="ac-head">

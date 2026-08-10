@@ -214,7 +214,16 @@ tr.flight-row.flash td { animation: landflash 2.4s ease-out 2; }
 td.sched, td.eta, td.ata { font-family: var(--mono); white-space: nowrap; }
 td.sched { color: var(--dim); }
 td.eta { color: var(--navy); font-weight: 600; }
-td.eta .eta-main { display: block; }
+td.eta .eta-main { display: inline; }
+/* The same arrival as a wall-clock time, sat beside the countdown at close to
+   equal weight: the countdown answers "have I got time?", the clock is what
+   gets written on the morning sheet. */
+td.eta .eta-clock {
+  display: inline; margin-left: 7px; padding-left: 7px;
+  border-left: 1px solid var(--line);
+  font-family: var(--mono); font-size: 14px; color: var(--text);
+}
+td.eta.live .eta-clock { color: var(--green); }
 td.eta.live .eta-main { color: var(--green); font-size: 17px; letter-spacing: .5px; }
 td.eta.approx .eta-main { color: var(--dim); font-weight: 500; }
 tr.flight-row.landed td.eta .eta-main { color: var(--green); }
