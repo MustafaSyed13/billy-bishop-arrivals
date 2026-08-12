@@ -1,0 +1,347 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="description" content="Demonstration of an automated reader for handwritten shift log sheets — runs entirely in your browser on sample data.">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; img-src 'self' data:; base-uri 'none'; object-src 'none'; form-action 'none'">
+<meta name="referrer" content="no-referrer">
+<title>Sheet reader — demonstration</title>
+<link rel="icon" href="icon-192.png" type="image/png">
+<style>
+:root{
+  --bg:#eef1f5;--panel:#fff;--line:#dde3ea;--line-soft:#ecf0f4;--text:#17212e;
+  --dim:#55657a;--faint:#8794a4;--navy:#0e2a47;--amber:#f5a623;--blue:#0b5cad;
+  --green:#0e8a4a;--red:#c8102e;
+  --mono:"SF Mono","Cascadia Code",Consolas,"Roboto Mono",monospace;
+  --sans:-apple-system,"Segoe UI",Roboto,Inter,system-ui,sans-serif;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:var(--bg);color:var(--text);font-family:var(--sans);line-height:1.55}
+a{color:var(--blue);text-decoration:none}
+a:hover{text-decoration:underline}
+
+.topbar{display:flex;justify-content:space-between;align-items:center;gap:16px;
+  padding:16px 28px;background:linear-gradient(180deg,#123458 0%,var(--navy) 100%);
+  color:#fff;box-shadow:0 2px 10px rgba(14,42,71,.25);flex-wrap:wrap}
+.brand{display:flex;align-items:center;gap:14px}
+.brand-code{font-family:var(--mono);font-size:26px;font-weight:700;letter-spacing:2px;
+  color:var(--amber);border:2px solid var(--amber);border-radius:10px;padding:5px 12px}
+.brand h1{font-size:17px;font-weight:600;letter-spacing:.2px}
+.brand-sub{font-size:10.5px;letter-spacing:1.4px;color:#9fb3c8;margin-top:2px}
+.back{color:#cfe0f0;font-size:13px}
+
+main{max-width:960px;margin:0 auto;padding:26px 24px 70px}
+.lede{font-size:15px;color:var(--dim);margin-bottom:22px;max-width:70ch}
+h2{font-size:15px;margin:30px 0 12px;letter-spacing:.2px}
+h2:first-of-type{margin-top:0}
+p{margin-bottom:12px;max-width:74ch}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;
+  padding:20px;margin-bottom:18px;box-shadow:0 2px 8px rgba(23,33,46,.06)}
+
+.notice{border-left:4px solid var(--amber);background:#fffdf6;
+  border-radius:0 8px 8px 0;padding:14px 18px;margin-bottom:22px;font-size:13.5px;color:#5c4708}
+.notice b{color:#3d2f05}
+
+/* ---- interactive demo ---- */
+.try{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px;margin-bottom:16px}
+label{display:block;font-size:10.5px;letter-spacing:.6px;text-transform:uppercase;
+  color:var(--faint);margin-bottom:5px}
+input{width:100%;font-family:var(--mono);font-size:15px;padding:9px 11px;
+  border:1px solid var(--line);border-radius:7px;background:#fafbfd;color:var(--text)}
+input:focus{outline:none;border-color:var(--amber);background:#fff}
+.verdict{border-radius:8px;padding:14px 16px;font-size:14px;border-left:4px solid var(--line);background:#fafbfd}
+.verdict.repaired{border-left-color:var(--amber);background:#fffdf6}
+.verdict.clean{border-left-color:var(--green);background:#f4fbf7}
+.verdict.bad{border-left-color:var(--red);background:#fff5f6}
+.verdict .headline{font-family:var(--mono);font-size:16px;margin-bottom:5px}
+.verdict .why{font-size:12.5px;color:var(--dim)}
+.chips{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px}
+.chip{font-size:12px;padding:5px 11px;border:1px solid var(--line);border-radius:20px;
+  background:#fff;cursor:pointer;color:var(--navy);font-family:var(--mono)}
+.chip:hover{border-color:var(--amber);background:#fffdf6}
+
+table{width:100%;border-collapse:collapse;font-size:13px;margin-top:6px}
+th{text-align:left;font-size:10px;letter-spacing:.6px;text-transform:uppercase;
+  color:var(--faint);padding:8px 8px;border-bottom:2px solid var(--line);white-space:nowrap}
+td{padding:7px 8px;border-bottom:1px solid var(--line-soft);vertical-align:top;font-family:var(--mono)}
+td.note{font-family:var(--sans);font-size:11.5px;color:var(--dim);line-height:1.45}
+tr.changed td{background:#fffdf6}
+tr.kept td{background:#f4fbf7}
+.strike{color:var(--faint);text-decoration:line-through}
+.arrow{color:var(--amber);padding:0 4px}
+.scroll{overflow-x:auto}
+
+ul{margin:0 0 12px 20px}
+li{margin-bottom:7px;max-width:72ch}
+footer{border-top:1px solid var(--line);padding:20px 28px;font-size:11.5px;
+  color:var(--faint);max-width:80ch;margin:0 auto}
+@media (max-width:640px){
+  main{padding:20px 14px 50px}
+  .topbar{padding:14px 16px}
+}
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <div class="brand-code">YTZ</div>
+    <div>
+      <h1>Sheet reader</h1>
+      <div class="brand-sub">PROTOTYPE DEMONSTRATION &middot; SAMPLE DATA ONLY</div>
+    </div>
+  </div>
+  <a class="back" href="index.html">&larr; Back to the arrivals board</a>
+</header>
+
+<main>
+
+<p class="lede">
+  The morning log sheet is filled in by hand and then re-typed into a spreadsheet.
+  This is a demonstration of software that reads the handwriting instead, checks
+  every value against what is already known about the flight, and hands back a
+  line ready to paste.
+</p>
+
+<div class="notice">
+  <b>Everything on this page is made up.</b> It runs entirely inside your browser
+  on sample values, uploads nothing, and stores nothing. No real sheet, no real
+  flight data, and no photograph is involved. The working tool runs offline on a
+  single computer and is not part of this website.
+</div>
+
+<h2>Try the part that matters</h2>
+<div class="card">
+  <p style="font-size:13.5px">
+    The hard problem is not reading the digits — it is knowing what they meant.
+    Change the values below and watch the checks run.
+  </p>
+
+  <div class="chips">
+    <button class="chip" data-ata="10:00" data-first="18">shorthand: "18"</button>
+    <button class="chip" data-ata="10:00" data-first="18:00">normalised: "18:00"</button>
+    <button class="chip" data-ata="10:50" data-first="05">rolls past the hour</button>
+    <button class="chip" data-ata="10:00" data-first="09:30">before the aircraft landed</button>
+    <button class="chip" data-ata="10:00" data-first="11:00">a genuine gate delay</button>
+    <button class="chip" data-ata="07:44" data-first="08:01">a normal row</button>
+  </div>
+
+  <div class="try">
+    <div>
+      <label for="ata">Aircraft on the ground</label>
+      <input id="ata" value="10:00" autocomplete="off" spellcheck="false">
+    </div>
+    <div>
+      <label for="first">First passenger, as written</label>
+      <input id="first" value="18" autocomplete="off" spellcheck="false">
+    </div>
+  </div>
+
+  <div class="verdict" id="verdict"></div>
+</div>
+
+<h2>Why a plain reader is not enough</h2>
+<p>
+  Optical character recognition on its own gives you the digits and nothing else.
+  It cannot tell that a passenger reaching the hall before the aircraft landed is
+  impossible, or that <span style="font-family:var(--mono)">18</span> written
+  beside a ten o'clock arrival means eighteen minutes past ten. Those judgements
+  need context the reader does not have.
+</p>
+<p>
+  This system supplies that context from the arrivals data it already holds — the
+  real flight numbers for the day, and the arrival times observed from the
+  aircraft's own position signal. Reading the sheet stops being open-ended
+  guesswork and becomes matching against a short list of things each line could
+  legally be.
+</p>
+
+<h2>What the checks catch</h2>
+<div class="card scroll">
+  <table>
+    <thead><tr><th>Written on the sheet</th><th>Result</th><th>Reasoning</th></tr></thead>
+    <tbody id="examples"></tbody>
+  </table>
+</div>
+
+<h2>What it refuses to do</h2>
+<p>
+  A correction is only applied when <b>exactly one</b> reading survives every
+  check. Where two readings would both fit, the cell is flagged and a person
+  decides. Guessing between them is how software quietly invents data, which
+  would be far worse than leaving the typing alone.
+</p>
+<p>
+  It also protects the signal the sheet exists to capture. An hour between the
+  aircraft landing and the first passenger is unusual, but it is real — it is
+  what a blocked gate looks like. That row is raised for confirmation and never
+  rewritten into a tidier number.
+</p>
+<p>
+  Every cell carries its own confidence, so a supervisor can see <em>which</em>
+  entries to check rather than having to trust or distrust the whole sheet. The
+  original text is always kept: when someone asks what the paper actually said,
+  the answer has not been overwritten by a correction.
+</p>
+
+<h2>Where it runs</h2>
+<ul>
+  <li>On one computer, offline. The photograph is read by a model on that machine and does not leave it.</li>
+  <li>Nothing is uploaded to this website, and this page has no connection to the tool.</li>
+  <li>Output is a line of text, copied and pasted into the existing workbook. No system is replaced and no process changes.</li>
+</ul>
+
+</main>
+
+<footer>
+  Unofficial prototype, built independently using publicly available information.
+  Not a Canada Border Services Agency system, not affiliated with or endorsed by
+  the CBSA, Nieuport Aviation, PortsToronto, or any airline. All values shown on
+  this page are fabricated for demonstration.
+</footer>
+
+<script>
+"use strict";
+
+/* The same rules as the real validator, kept deliberately small and readable.
+   Minutes since midnight throughout. */
+var DEPLANE_MIN = 3;      // an aircraft needs time to taxi and open a door
+var DEPLANE_MAX = 35;     // beyond this is unusual enough to want a human
+var DEPLANE_HARD = 90;    // beyond this the reading itself is not believable
+
+function parseTime(text){
+  var s = String(text || "").replace(/\D/g, "");
+  if (!s || s.length > 4 || s.length <= 2) return null;
+  var h = s.length === 3 ? +s[0] : +s.slice(0, 2);
+  var m = s.length === 3 ? +s.slice(1) : +s.slice(2);
+  return (h > 23 || m > 59) ? null : h * 60 + m;
+}
+function bareMinutes(text){
+  var s = String(text || "").replace(/\D/g, "");
+  return (s.length >= 1 && s.length <= 2 && +s <= 59) ? +s : null;
+}
+function fmt(mins){
+  if (mins === null || mins === undefined) return "—";
+  mins = ((mins % 1440) + 1440) % 1440;
+  return String(Math.floor(mins / 60)).padStart(2, "0") + ":" + String(mins % 60).padStart(2, "0");
+}
+
+/* Returns {value, state, why} where state is clean | repaired | flagged. */
+function resolve(ataText, writtenText){
+  var anchor = parseTime(ataText);
+  var written = String(writtenText || "").trim();
+  if (anchor === null) return {value:null, state:"flagged", why:"The arrival time is not readable, so there is nothing to check against."};
+  if (!written)        return {value:null, state:"flagged", why:"Nothing written in this cell."};
+
+  var literal = parseTime(written);
+  var hour = Math.floor(anchor / 60) * 60;
+
+  // Shorthand: one or two digits are minutes past the arrival's hour.
+  if (literal === null){
+    var mins = bareMinutes(written);
+    if (mins !== null){
+      var opts = [hour + mins, hour + 60 + mins];
+      for (var i = 0; i < opts.length; i++){
+        var d = opts[i] - anchor;
+        if (d >= DEPLANE_MIN && d <= DEPLANE_MAX){
+          return {value:opts[i], state:"repaired",
+            why:'"' + written + '" read as minutes past the hour, anchored to the ' + fmt(anchor) +
+                " arrival — " + fmt(opts[i]) + ", " + d + " minutes after the aircraft was on the ground."};
+        }
+      }
+    }
+    return {value:null, state:"flagged", why:'"' + written + '" cannot be read as a time.'};
+  }
+
+  var delta = literal - anchor;
+  if (delta >= DEPLANE_MIN && delta <= DEPLANE_MAX){
+    return {value:literal, state:"clean",
+      why:"Read as written. " + delta + " minutes after the aircraft was on the ground, which is normal."};
+  }
+
+  // Only reinterpret when the literal reading is impossible — never when it is
+  // merely unusual, or a real gate delay would be erased.
+  var impossible = delta < DEPLANE_MIN || delta > DEPLANE_HARD;
+  if (impossible && literal % 60 === 0){
+    var asMinutes = literal / 60;
+    if (asMinutes <= 59){
+      var cands = [hour + asMinutes, hour + 60 + asMinutes];
+      for (var j = 0; j < cands.length; j++){
+        var dd = cands[j] - anchor;
+        if (dd >= DEPLANE_MIN && dd <= DEPLANE_MAX){
+          return {value:cands[j], state:"repaired",
+            why:fmt(literal) + " would be " + delta + " minutes after the arrival, which cannot be right. " +
+                "The hour digits are really the minutes: " + fmt(cands[j]) + "."};
+        }
+      }
+    }
+  }
+
+  if (delta < DEPLANE_MIN){
+    return {value:literal, state:"flagged",
+      why:fmt(literal) + " is before the aircraft was on the ground at " + fmt(anchor) +
+          ". A passenger cannot reach the hall first, so this needs a person."};
+  }
+  if (delta > DEPLANE_HARD){
+    return {value:literal, state:"flagged",
+      why:fmt(literal) + " is " + delta + " minutes after the arrival — too long to be a transcription of this line."};
+  }
+  return {value:literal, state:"flagged",
+    why:fmt(literal) + " is " + delta + " minutes after the arrival. Longer than usual, but a blocked gate looks " +
+        "exactly like this, so the value is kept and raised for confirmation rather than changed."};
+}
+
+var VERDICT_CLASS = {clean:"clean", repaired:"repaired", flagged:"bad"};
+var VERDICT_LABEL = {clean:"Accepted as written", repaired:"Corrected", flagged:"Needs a person"};
+
+function run(){
+  var out = resolve(document.getElementById("ata").value, document.getElementById("first").value);
+  var el = document.getElementById("verdict");
+  el.className = "verdict " + VERDICT_CLASS[out.state];
+  el.innerHTML = '<div class="headline">' + VERDICT_LABEL[out.state] +
+    (out.value !== null ? " &nbsp;&rarr;&nbsp; " + fmt(out.value) : "") + "</div>" +
+    '<div class="why">' + esc(out.why) + "</div>";
+}
+function esc(s){
+  return String(s).replace(/[&<>"']/g, function(c){
+    return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];
+  });
+}
+
+document.getElementById("ata").addEventListener("input", run);
+document.getElementById("first").addEventListener("input", run);
+Array.prototype.forEach.call(document.querySelectorAll(".chip"), function(chip){
+  chip.addEventListener("click", function(){
+    document.getElementById("ata").value = chip.dataset.ata;
+    document.getElementById("first").value = chip.dataset.first;
+    run();
+  });
+});
+
+/* The worked examples table is generated by the same code that powers the box
+   above, so the page cannot drift out of step with its own logic. */
+var EXAMPLES = [
+  ["10:00", "18",    "shorthand minutes"],
+  ["10:00", "18:00", "shorthand that was written out in full"],
+  ["10:50", "05",    "shorthand crossing into the next hour"],
+  ["10:00", "09:30", "impossible ordering"],
+  ["10:00", "11:00", "a real, unusually long wait"],
+  ["07:44", "08:01", "an ordinary row"]
+];
+document.getElementById("examples").innerHTML = EXAMPLES.map(function(row){
+  var ata = row[0], written = row[1], label = row[2];
+  var out = resolve(ata, written);
+  var changed = out.state === "repaired";
+  var cls = changed ? "changed" : (out.state === "clean" ? "kept" : "");
+  var result = out.value === null ? "—" :
+    (changed ? '<span class="strike">' + esc(written) + '</span><span class="arrow">&rarr;</span>' + fmt(out.value)
+             : fmt(out.value));
+  return '<tr class="' + cls + '"><td>on the ground ' + esc(ata) + "<br>written " + esc(written) +
+         "</td><td>" + result + "</td><td class=\"note\"><b>" + esc(label) + "</b><br>" + esc(out.why) + "</td></tr>";
+}).join("");
+
+run();
+</script>
+</body>
+</html>
