@@ -14,7 +14,7 @@ if (typeof AbortSignal !== "undefined" && !AbortSignal.timeout) {
    Data sources (all free, keyless):
      1. billybishopairport.com arrivals feed  -> schedule / ETA / status
         (fetched through public CORS-friendly readers, 60 s cycle)
-     2. airplanes.live ADS-B network          -> live aircraft positions
+     2. community ADS-B networks              -> live aircraft positions
         (20 s cycle; used to detect the actual touchdown = ATA)
    ============================================================ */
 
@@ -26,7 +26,41 @@ const DEPS_INTERVAL_MS = 90_000;
    repo. Served from GitHub's CDN with open CORS: instant, no proxies, and it
    doesn't rate-limit when many viewers share one office IP. */
 const FEED_URL = "https://raw.githubusercontent.com/MustafaSyed13/billy-bishop-arrivals/data/board.json";
-const ADSB_URL = "https://api.airplanes.live/v2/point/43.6275/-79.3962/250";
+/* RADAR SOURCES, tried in order, remembering which one worked.
+   airplanes.live closed its free API and every request now 403s, which emptied
+   the map and pushed arrival times back onto the airport's estimate. These
+   feeds publish the same readsb JSON; only the key holding the aircraft array
+   differs. Radius is nautical miles (250 is their maximum, ~460 km). */
+const ADSB_SOURCES = [
+  { name: "adsb.lol", point: "https://api.adsb.lol/v2/point/43.6275/-79.3962/250",
+    callsign: (cs) => `https://api.adsb.lol/v2/callsign/${cs}`, key: "ac" },
+  { name: "adsb.fi", point: "https://opendata.adsb.fi/api/v2/lat/43.6275/lon/-79.3962/dist/250",
+    callsign: (cs) => `https://opendata.adsb.fi/api/v2/callsign/${cs}`, key: "aircraft" },
+];
+let adsbIdx = 0;
+
+/* One aircraft list from whichever source answers. Returns [] only when they
+   all fail, and says so in the console rather than failing silently. */
+async function fetchAircraft(which) {
+  let lastErr = "";
+  for (let i = 0; i < ADSB_SOURCES.length; i++) {
+    const idx = (adsbIdx + i) % ADSB_SOURCES.length;
+    const src = ADSB_SOURCES[idx];
+    const url = typeof which === "string" ? src.callsign(which) : src.point;
+    try {
+      const res = await fetch(url, { signal: AbortSignal.timeout(9000) });
+      if (!res.ok) { lastErr = `${src.name} HTTP ${res.status}`; continue; }
+      const list = (await res.json())[src.key] || [];
+      // A callsign lookup legitimately returns nothing when that flight is not
+      // airborne, so an empty list is only a failure for the area query.
+      if (!list.length && typeof which !== "string") { lastErr = `${src.name} empty`; continue; }
+      adsbIdx = idx;
+      return list;
+    } catch (e) { lastErr = `${src.name} ${e.message}`; }
+  }
+  console.warn("ADS-B unavailable:", lastErr);
+  return [];
+}
 const BOARD_INTERVAL_MS = 60_000;
 const ADSB_BASE_MS = 15_000;      // radar poll cadence, nothing close by
 const ADSB_FAST_MS = 6_000;       // radar poll cadence with an aircraft inside 80 km
@@ -756,10 +790,7 @@ async function lookupDistantFlights() {
       : ["JZA" + digits.slice(1), "JZA" + digits];
     const cand = cands[state.csTry % cands.length];
     try {
-      const r = await fetch(`https://api.airplanes.live/v2/callsign/${cand}`);
-      if (!r.ok) continue;
-      const d = await r.json();
-      const ac = matchAircraft(f, d.ac || []);
+      const ac = matchAircraft(f, await fetchAircraft(cand));
       if (ac) ingestAircraft(f, ac);
     } catch {}
   }
@@ -769,10 +800,8 @@ async function lookupDistantFlights() {
 
 async function fetchAdsb() {
   try {
-    const res = await fetch(ADSB_URL);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = await res.json();
-    const list = data.ac || [];
+    const list = await fetchAircraft();
+    if (!list.length) throw new Error("no ADS-B source available");
     for (const f of state.flights) {
       if (f.day !== "Today") continue;
       if (f.status.toLowerCase() === "cancelled") continue;

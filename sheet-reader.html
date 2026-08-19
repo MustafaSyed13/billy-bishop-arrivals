@@ -3,10 +3,11 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta name="description" content="Demonstration of an automated reader for handwritten shift log sheets — runs entirely in your browser on sample data.">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; img-src 'self' data:; base-uri 'none'; object-src 'none'; form-action 'none'">
+<meta name="description" content="Photograph a handwritten shift sheet and get a line ready to paste into the workbook.">
+<meta name="theme-color" content="#0e2a47">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' https://api.anthropic.com https://crrrykfftzlzymmmawsn.supabase.co; base-uri 'none'; object-src 'none'; form-action 'none'">
 <meta name="referrer" content="no-referrer">
-<title>Sheet reader — demonstration</title>
+<title>Sheet reader</title>
 <link rel="icon" href="icon-192.png" type="image/png">
 <style>
 :root{
@@ -17,69 +18,78 @@
   --sans:-apple-system,"Segoe UI",Roboto,Inter,system-ui,sans-serif;
 }
 *{margin:0;padding:0;box-sizing:border-box}
-body{background:var(--bg);color:var(--text);font-family:var(--sans);line-height:1.55}
-a{color:var(--blue);text-decoration:none}
-a:hover{text-decoration:underline}
+body{background:var(--bg);color:var(--text);font-family:var(--sans);padding-bottom:76px}
+a{color:var(--blue);text-decoration:none}a:hover{text-decoration:underline}
 
 .topbar{display:flex;justify-content:space-between;align-items:center;gap:16px;
-  padding:16px 28px;background:linear-gradient(180deg,#123458 0%,var(--navy) 100%);
+  padding:14px 24px;background:linear-gradient(180deg,#123458,var(--navy));
   color:#fff;box-shadow:0 2px 10px rgba(14,42,71,.25);flex-wrap:wrap}
-.brand{display:flex;align-items:center;gap:14px}
-.brand-code{font-family:var(--mono);font-size:26px;font-weight:700;letter-spacing:2px;
-  color:var(--amber);border:2px solid var(--amber);border-radius:10px;padding:5px 12px}
-.brand h1{font-size:17px;font-weight:600;letter-spacing:.2px}
-.brand-sub{font-size:10.5px;letter-spacing:1.4px;color:#9fb3c8;margin-top:2px}
+.brand{display:flex;align-items:center;gap:13px}
+.brand-code{font-family:var(--mono);font-size:24px;font-weight:700;letter-spacing:2px;
+  color:var(--amber);border:2px solid var(--amber);border-radius:9px;padding:4px 11px}
+.brand h1{font-size:17px;font-weight:600}
+.brand-sub{font-size:10px;letter-spacing:1.4px;color:#9fb3c8;margin-top:2px}
 .back{color:#cfe0f0;font-size:13px}
 
-main{max-width:960px;margin:0 auto;padding:26px 24px 70px}
-.lede{font-size:15px;color:var(--dim);margin-bottom:22px;max-width:70ch}
-h2{font-size:15px;margin:30px 0 12px;letter-spacing:.2px}
-h2:first-of-type{margin-top:0}
-p{margin-bottom:12px;max-width:74ch}
+main{max-width:1240px;margin:0 auto;padding:20px 20px 40px}
 .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;
-  padding:20px;margin-bottom:18px;box-shadow:0 2px 8px rgba(23,33,46,.06)}
+  padding:18px;margin-bottom:14px;box-shadow:0 2px 8px rgba(23,33,46,.06)}
 
-.notice{border-left:4px solid var(--amber);background:#fffdf6;
-  border-radius:0 8px 8px 0;padding:14px 18px;margin-bottom:22px;font-size:13.5px;color:#5c4708}
-.notice b{color:#3d2f05}
-
-/* ---- interactive demo ---- */
-.try{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px;margin-bottom:16px}
+/* ---- key setup ---- */
+.keyrow{display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap}
+.keyrow > div{flex:1;min-width:260px}
 label{display:block;font-size:10.5px;letter-spacing:.6px;text-transform:uppercase;
   color:var(--faint);margin-bottom:5px}
-input{width:100%;font-family:var(--mono);font-size:15px;padding:9px 11px;
-  border:1px solid var(--line);border-radius:7px;background:#fafbfd;color:var(--text)}
+input[type=password],input[type=text]{width:100%;font-family:var(--mono);font-size:13px;
+  padding:9px 11px;border:1px solid var(--line);border-radius:7px;background:#fafbfd;color:var(--text)}
 input:focus{outline:none;border-color:var(--amber);background:#fff}
-.verdict{border-radius:8px;padding:14px 16px;font-size:14px;border-left:4px solid var(--line);background:#fafbfd}
-.verdict.repaired{border-left-color:var(--amber);background:#fffdf6}
-.verdict.clean{border-left-color:var(--green);background:#f4fbf7}
-.verdict.bad{border-left-color:var(--red);background:#fff5f6}
-.verdict .headline{font-family:var(--mono);font-size:16px;margin-bottom:5px}
-.verdict .why{font-size:12.5px;color:var(--dim)}
-.chips{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px}
-.chip{font-size:12px;padding:5px 11px;border:1px solid var(--line);border-radius:20px;
-  background:#fff;cursor:pointer;color:var(--navy);font-family:var(--mono)}
-.chip:hover{border-color:var(--amber);background:#fffdf6}
+.keynote{font-size:11.5px;color:var(--dim);margin-top:9px;line-height:1.5}
 
-table{width:100%;border-collapse:collapse;font-size:13px;margin-top:6px}
-th{text-align:left;font-size:10px;letter-spacing:.6px;text-transform:uppercase;
-  color:var(--faint);padding:8px 8px;border-bottom:2px solid var(--line);white-space:nowrap}
-td{padding:7px 8px;border-bottom:1px solid var(--line-soft);vertical-align:top;font-family:var(--mono)}
-td.note{font-family:var(--sans);font-size:11.5px;color:var(--dim);line-height:1.45}
-tr.changed td{background:#fffdf6}
-tr.kept td{background:#f4fbf7}
-.strike{color:var(--faint);text-decoration:line-through}
-.arrow{color:var(--amber);padding:0 4px}
+/* ---- upload ---- */
+.drop{border:2px dashed var(--line);border-radius:11px;padding:38px 20px;text-align:center;
+  cursor:pointer;background:#fafbfd;display:block}
+.drop:hover,.drop.over{border-color:var(--amber);background:#fffdf7}
+.drop .big{font-size:16px;font-weight:600;margin-bottom:5px}
+.drop .small{font-size:12.5px;color:var(--dim)}
+input[type=file]{display:none}
+
+.status{font-size:13.5px;color:var(--dim);margin-top:12px;min-height:22px;line-height:1.5}
+.status .err{color:var(--red)}
+.spin{display:inline-block;width:13px;height:13px;border:2px solid var(--line);
+  border-top-color:var(--amber);border-radius:50%;animation:sp .7s linear infinite;
+  vertical-align:-2px;margin-right:7px}
+@keyframes sp{to{transform:rotate(360deg)}}
+
+/* ---- results ---- */
+.bar{display:flex;gap:16px;flex-wrap:wrap;font-size:13px;margin-bottom:12px;align-items:center}
+.bar b{font-family:var(--mono)}
+.bar .warn{color:var(--red)}
 .scroll{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{text-align:left;font-size:9.5px;letter-spacing:.5px;text-transform:uppercase;color:var(--faint);
+  padding:7px 5px;border-bottom:2px solid var(--line);white-space:nowrap}
+td{padding:3px 5px;border-bottom:1px solid var(--line-soft);vertical-align:top}
+tr.review{background:#fff9ec}
+.cell{width:100%;min-width:64px;border:1px solid transparent;border-radius:5px;padding:4px 5px;
+  font-family:var(--mono);font-size:13px;background:transparent;color:var(--text)}
+.cell:focus{border-color:var(--amber);background:#fff;outline:none}
+.cell.medium{border-left:3px solid var(--amber)}
+.cell.low,.cell.failed{border-left:3px solid var(--red);background:#fff5f6}
+.why{font-size:10px;color:var(--dim);line-height:1.4;margin-top:2px;max-width:190px}
+.was{color:var(--faint);font-style:italic}
 
-ul{margin:0 0 12px 20px}
-li{margin-bottom:7px;max-width:72ch}
-footer{border-top:1px solid var(--line);padding:20px 28px;font-size:11.5px;
-  color:var(--faint);max-width:80ch;margin:0 auto}
-@media (max-width:640px){
-  main{padding:20px 14px 50px}
-  .topbar{padding:14px 16px}
-}
+.actions{position:fixed;bottom:0;left:0;right:0;background:var(--panel);
+  border-top:1px solid var(--line);padding:11px 20px;display:flex;gap:10px;align-items:center;
+  flex-wrap:wrap;box-shadow:0 -2px 10px rgba(23,33,46,.07)}
+button{font:600 13px var(--sans);padding:9px 16px;border-radius:7px;border:1px solid var(--line);
+  background:#fff;color:var(--navy);cursor:pointer}
+button.primary{background:var(--navy);color:#fff;border-color:var(--navy)}
+button:disabled{opacity:.45;cursor:default}
+.hint{font-size:12px;color:var(--dim)}
+.ok{color:var(--green);font-weight:600}
+footer{border-top:1px solid var(--line);padding:16px 24px;font-size:11px;color:var(--faint);
+  max-width:80ch;margin:0 auto}
+@media (max-width:640px){main{padding:14px 12px 30px}.topbar{padding:12px 14px}}
 </style>
 </head>
 <body>
@@ -89,259 +99,584 @@ footer{border-top:1px solid var(--line);padding:20px 28px;font-size:11.5px;
     <div class="brand-code">YTZ</div>
     <div>
       <h1>Sheet reader</h1>
-      <div class="brand-sub">PROTOTYPE DEMONSTRATION &middot; SAMPLE DATA ONLY</div>
+      <div class="brand-sub">PHOTO IN &middot; PASTEABLE ROWS OUT</div>
     </div>
   </div>
-  <a class="back" href="index.html">&larr; Back to the arrivals board</a>
+  <a class="back" href="index.html">&larr; Arrivals board</a>
 </header>
 
 <main>
 
-<p class="lede">
-  The morning log sheet is filled in by hand and then re-typed into a spreadsheet.
-  This is a demonstration of software that reads the handwriting instead, checks
-  every value against what is already known about the flight, and hands back a
-  line ready to paste.
-</p>
-
-<div class="notice">
-  <b>Everything on this page is made up.</b> It runs entirely inside your browser
-  on sample values, uploads nothing, and stores nothing. No real sheet, no real
-  flight data, and no photograph is involved. The working tool runs offline on a
-  single computer and is not part of this website.
+<div class="card" id="setupCard">
+  <div class="keyrow">
+    <div>
+      <label for="key">Anthropic API key</label>
+      <input type="password" id="key" placeholder="sk-ant-..." autocomplete="off" spellcheck="false">
+    </div>
+    <button id="saveKey">Save</button>
+  </div>
+  <div class="keynote">
+    Stored only in this browser and sent only to Anthropic when you read a sheet.
+    Get one at <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener noreferrer">console.anthropic.com</a>.
+    The photograph is uploaded to Anthropic to be read — do not use this for material you are not permitted to send off-site.
+  </div>
 </div>
 
-<h2>Try the part that matters</h2>
 <div class="card">
-  <p style="font-size:13.5px">
-    The hard problem is not reading the digits — it is knowing what they meant.
-    Change the values below and watch the checks run.
-  </p>
-
-  <div class="chips">
-    <button class="chip" data-ata="10:00" data-first="18">shorthand: "18"</button>
-    <button class="chip" data-ata="10:00" data-first="18:00">normalised: "18:00"</button>
-    <button class="chip" data-ata="10:50" data-first="05">rolls past the hour</button>
-    <button class="chip" data-ata="10:00" data-first="09:30">before the aircraft landed</button>
-    <button class="chip" data-ata="10:00" data-first="11:00">a genuine gate delay</button>
-    <button class="chip" data-ata="07:44" data-first="08:01">a normal row</button>
-  </div>
-
-  <div class="try">
-    <div>
-      <label for="ata">Aircraft on the ground</label>
-      <input id="ata" value="10:00" autocomplete="off" spellcheck="false">
-    </div>
-    <div>
-      <label for="first">First passenger, as written</label>
-      <input id="first" value="18" autocomplete="off" spellcheck="false">
-    </div>
-  </div>
-
-  <div class="verdict" id="verdict"></div>
+  <label class="drop" id="drop" for="file">
+    <div class="big">Take a photo of the sheet</div>
+    <div class="small">Or drop an image here. Whole page, square-on, good light.</div>
+  </label>
+  <input type="file" id="file" accept="image/*" capture="environment">
+  <div class="status" id="status"></div>
 </div>
 
-<h2>Why a plain reader is not enough</h2>
-<p>
-  Optical character recognition on its own gives you the digits and nothing else.
-  It cannot tell that a passenger reaching the hall before the aircraft landed is
-  impossible, or that <span style="font-family:var(--mono)">18</span> written
-  beside a ten o'clock arrival means eighteen minutes past ten. Those judgements
-  need context the reader does not have.
-</p>
-<p>
-  This system supplies that context from the arrivals data it already holds — the
-  real flight numbers for the day, and the arrival times observed from the
-  aircraft's own position signal. Reading the sheet stops being open-ended
-  guesswork and becomes matching against a short list of things each line could
-  legally be.
-</p>
-
-<h2>What the checks catch</h2>
-<div class="card scroll">
-  <table>
-    <thead><tr><th>Written on the sheet</th><th>Result</th><th>Reasoning</th></tr></thead>
-    <tbody id="examples"></tbody>
-  </table>
+<div class="card" id="resultCard" hidden>
+  <div class="bar" id="bar"></div>
+  <div class="scroll"><table id="table"></table></div>
 </div>
-
-<h2>What it refuses to do</h2>
-<p>
-  A correction is only applied when <b>exactly one</b> reading survives every
-  check. Where two readings would both fit, the cell is flagged and a person
-  decides. Guessing between them is how software quietly invents data, which
-  would be far worse than leaving the typing alone.
-</p>
-<p>
-  It also protects the signal the sheet exists to capture. An hour between the
-  aircraft landing and the first passenger is unusual, but it is real — it is
-  what a blocked gate looks like. That row is raised for confirmation and never
-  rewritten into a tidier number.
-</p>
-<p>
-  Every cell carries its own confidence, so a supervisor can see <em>which</em>
-  entries to check rather than having to trust or distrust the whole sheet. The
-  original text is always kept: when someone asks what the paper actually said,
-  the answer has not been overwritten by a correction.
-</p>
-
-<h2>Where it runs</h2>
-<ul>
-  <li>On one computer, offline. The photograph is read by a model on that machine and does not leave it.</li>
-  <li>Nothing is uploaded to this website, and this page has no connection to the tool.</li>
-  <li>Output is a line of text, copied and pasted into the existing workbook. No system is replaced and no process changes.</li>
-</ul>
 
 </main>
 
+<div class="actions" id="actions" hidden>
+  <button class="primary" id="copy">Copy all rows</button>
+  <button id="copyFilled">Copy filled rows only</button>
+  <span class="hint" id="hint"></span>
+</div>
+
 <footer>
-  Unofficial prototype, built independently using publicly available information.
-  Not a Canada Border Services Agency system, not affiliated with or endorsed by
-  the CBSA, Nieuport Aviation, PortsToronto, or any airline. All values shown on
-  this page are fabricated for demonstration.
+  Unofficial prototype built on publicly available information. Not a Canada Border
+  Services Agency system and not affiliated with or endorsed by the CBSA, Nieuport
+  Aviation, PortsToronto, or any airline.
 </footer>
 
 <script>
 "use strict";
+var $ = function(id){ return document.getElementById(id); };
 
-/* The same rules as the real validator, kept deliberately small and readable.
-   Minutes since midnight throughout. */
-var DEPLANE_MIN = 3;      // an aircraft needs time to taxi and open a door
-var DEPLANE_MAX = 35;     // beyond this is unusual enough to want a human
-var DEPLANE_HARD = 90;    // beyond this the reading itself is not believable
+/* ==========================================================================
+   1. Settings
+   ========================================================================== */
+var KEY_STORE = "ytz-reader-key";
+var SUPA = "https://crrrykfftzlzymmmawsn.supabase.co/rest/v1";
+var SUPA_KEY = "sb_publishable_b5eZTW04X5TiOo_vt190Rg_rRLkz3Gf";
+var MODEL = "claude-opus-5";
+
+var COLUMNS = ["flight_no","origin","eta","ata","crew_count","pax_count",
+               "first_pax_pil","last_pax_pil","gate","bso_count"];
+var LABELS = {flight_no:"Flight",origin:"Origin",eta:"ETA",ata:"ATA",crew_count:"Crew",
+              pax_count:"Pax",first_pax_pil:"First pax",last_pax_pil:"Last pax",
+              gate:"Gate",bso_count:"BSOs"};
+var OPERATIONAL = ["ata","pax_count","first_pax_pil","last_pax_pil","gate","bso_count"];
+
+/* ==========================================================================
+   2. The repair engine — same rules as the Python validator
+   ========================================================================== */
+var DEPLANE_MIN = 3, DEPLANE_MAX = 35, DEPLANE_HARD = 90;
+var PROCESSING_MAX = 180;
+var SEATS = {DH8D:78, E75S:76, E75L:76, E295:132, CRJ9:76, BCS3:137};
+var MAX_SEATS = 137;
+var CONFUSE = {"0":["6","8","9"],"1":["7","4"],"2":["7","3"],"3":["8","5","2"],
+               "4":["9","1"],"5":["6","3","8"],"6":["0","5","8"],"7":["1","2","9"],
+               "8":["0","3","6","5"],"9":["4","7","0"]};
+
+function digitsOf(t){ return String(t == null ? "" : t).replace(/\D/g, ""); }
 
 function parseTime(text){
-  var s = String(text || "").replace(/\D/g, "");
+  var s = digitsOf(text);
   if (!s || s.length > 4 || s.length <= 2) return null;
-  var h = s.length === 3 ? +s[0] : +s.slice(0, 2);
+  var h = s.length === 3 ? +s[0] : +s.slice(0,2);
   var m = s.length === 3 ? +s.slice(1) : +s.slice(2);
-  return (h > 23 || m > 59) ? null : h * 60 + m;
+  return (h > 23 || m > 59) ? null : h*60 + m;
 }
 function bareMinutes(text){
-  var s = String(text || "").replace(/\D/g, "");
+  var s = digitsOf(text);
   return (s.length >= 1 && s.length <= 2 && +s <= 59) ? +s : null;
 }
-function fmt(mins){
-  if (mins === null || mins === undefined) return "—";
-  mins = ((mins % 1440) + 1440) % 1440;
-  return String(Math.floor(mins / 60)).padStart(2, "0") + ":" + String(mins % 60).padStart(2, "0");
+function fmt(m){
+  if (m === null || m === undefined) return null;
+  m = ((m % 1440) + 1440) % 1440;
+  return String(Math.floor(m/60)).padStart(2,"0") + ":" + String(m%60).padStart(2,"0");
+}
+function variants(text){
+  var d = digitsOf(text), out = [];
+  for (var i = 0; i < d.length; i++){
+    var alts = CONFUSE[d[i]] || [];
+    for (var j = 0; j < alts.length; j++) out.push(d.slice(0,i) + alts[j] + d.slice(i+1));
+  }
+  return out;
 }
 
-/* Returns {value, state, why} where state is clean | repaired | flagged. */
-function resolve(ataText, writtenText){
-  var anchor = parseTime(ataText);
-  var written = String(writtenText || "").trim();
-  if (anchor === null) return {value:null, state:"flagged", why:"The arrival time is not readable, so there is nothing to check against."};
-  if (!written)        return {value:null, state:"flagged", why:"Nothing written in this cell."};
+/* Flight-number distance: prefix and digits weighted separately, so a
+   different airline is never treated as a near miss. */
+function splitFlight(s){
+  var m = /^([A-Z]*)(\d*)$/.exec(String(s || "").replace(/[^A-Za-z0-9]/g,"").toUpperCase());
+  return m ? {p:m[1], d:m[2]} : {p:"", d:""};
+}
+function flightDistance(written, known){
+  var w = splitFlight(written), k = splitFlight(known);
+  if (!w.d || !k.d) return 99;
+  var cost = (w.p === k.p) ? 0 : (w.p ? 5 : 1);
+  if (w.d.length !== k.d.length) return cost + 3;
+  for (var i = 0; i < w.d.length; i++) if (w.d[i] !== k.d[i]) cost++;
+  return cost;
+}
+function matchFlight(written, known){
+  if (!written || !known.length) return {flight:null, distance:99};
+  var scored = known.map(function(k){ return {d:flightDistance(written,k.flight_no), k:k}; })
+                    .sort(function(a,b){ return a.d - b.d; });
+  // An ambiguous match is no match.
+  if (scored.length > 1 && scored[1].d === scored[0].d && scored[1].k.flight_no !== scored[0].k.flight_no)
+    return {flight:null, distance:scored[0].d};
+  return {flight:scored[0].k, distance:scored[0].d};
+}
 
-  var literal = parseTime(written);
-  var hour = Math.floor(anchor / 60) * 60;
+function mkCell(v){
+  return {value:(v == null || v === "") ? null : String(v).trim(), raw:null, conf:"high", notes:[]};
+}
+function repair(cell, val, why, conf){
+  if (cell.raw === null) cell.raw = cell.value;
+  cell.value = val; cell.conf = conf || "medium"; cell.notes.push(why);
+}
+var RANK = {high:0, medium:1, low:2, failed:3};
+function flag(cell, why, conf){
+  conf = conf || "low";
+  if (RANK[conf] > RANK[cell.conf]) cell.conf = conf;
+  cell.notes.push(why);
+}
 
-  // Shorthand: one or two digits are minutes past the arrival's hour.
+/* Resolve one handwritten time against the thing it must follow. */
+function resolveTime(cell, name, anchor, anchorName, lo, hi, hard){
+  if (!cell.value) return null;
+  var literal = parseTime(cell.value);
+  var hour = anchor === null ? null : Math.floor(anchor/60)*60;
+
   if (literal === null){
-    var mins = bareMinutes(written);
-    if (mins !== null){
+    var mins = bareMinutes(cell.value);
+    if (mins !== null && anchor !== null){
       var opts = [hour + mins, hour + 60 + mins];
       for (var i = 0; i < opts.length; i++){
         var d = opts[i] - anchor;
-        if (d >= DEPLANE_MIN && d <= DEPLANE_MAX){
-          return {value:opts[i], state:"repaired",
-            why:'"' + written + '" read as minutes past the hour, anchored to the ' + fmt(anchor) +
-                " arrival — " + fmt(opts[i]) + ", " + d + " minutes after the aircraft was on the ground."};
+        if (d >= lo && d <= hi){
+          repair(cell, fmt(opts[i]), name + ': "' + cell.value + '" read as minutes past the hour, anchored to ' + anchorName + " " + fmt(anchor));
+          return opts[i];
         }
       }
     }
-    return {value:null, state:"flagged", why:'"' + written + '" cannot be read as a time.'};
+    flag(cell, name + ': "' + cell.value + '" is not a readable time', "failed");
+    return null;
   }
 
+  cell.value = fmt(literal);
+  if (anchor === null) return literal;
   var delta = literal - anchor;
-  if (delta >= DEPLANE_MIN && delta <= DEPLANE_MAX){
-    return {value:literal, state:"clean",
-      why:"Read as written. " + delta + " minutes after the aircraft was on the ground, which is normal."};
+  if (delta >= lo && delta <= hi) return literal;
+
+  var cands = [];
+  var bm = bareMinutes(cell.value);
+  if (bm !== null){
+    [hour + bm, hour + 60 + bm].forEach(function(c){ if (c - anchor >= lo && c - anchor <= hi) cands.push([c,"minutes past the hour"]); });
+  }
+  // Shorthand that got written out in full ("18" -> "18:00"). Only when the
+  // literal reading is impossible, never when it is merely unusual — a real
+  // gate delay must survive untouched.
+  if ((delta < lo || delta > hard) && literal % 60 === 0 && literal/60 <= 59){
+    var asMin = literal/60;
+    [hour + asMin, hour + 60 + asMin].forEach(function(c){
+      if (c - anchor >= lo && c - anchor <= hi) cands.push([c,"hour digits read as minutes"]);
+    });
+  }
+  variants(cell.value).forEach(function(v){
+    var c = parseTime(v);
+    if (c !== null && c - anchor >= lo && c - anchor <= hi) cands.push([c,"single-digit misread"]);
+  });
+
+  var seen = {}, uniq = [];
+  cands.forEach(function(c){ if (!seen[c[0]]){ seen[c[0]] = 1; uniq.push(c); } });
+
+  if (uniq.length === 1){
+    repair(cell, fmt(uniq[0][0]), name + ": " + fmt(literal) + " is " + delta + " min from " + anchorName +
+           " " + fmt(anchor) + ", outside the expected " + lo + "-" + hi + "; repaired as " + uniq[0][1]);
+    return uniq[0][0];
+  }
+  if (uniq.length > 1){
+    flag(cell, name + ": " + fmt(literal) + " is implausible; " + uniq.length + " readings would fit - needs a person");
+    return literal;
+  }
+  if (delta < lo)      flag(cell, name + ": " + fmt(literal) + " is before " + anchorName + " " + fmt(anchor) + " - impossible", "failed");
+  else if (delta > hard) flag(cell, name + ": " + fmt(literal) + " is " + delta + " min after " + anchorName + " - too long to be this line", "failed");
+  else                 flag(cell, name + ": " + delta + " min after " + anchorName + ", longer than usual - confirm it is real", "medium");
+  return literal;
+}
+
+function intCell(cell, name, lo, hi){
+  if (!cell.value) return;
+  var d = digitsOf(cell.value);
+  if (!d){ flag(cell, name + ': "' + cell.value + '" is not a number', "failed"); return; }
+  var n = +d; cell.value = String(n);
+  if (n >= lo && n <= hi) return;
+  var fits = [];
+  variants(d).forEach(function(v){ var x = +v; if (v && x >= lo && x <= hi && fits.indexOf(x) < 0) fits.push(x); });
+  if (fits.length === 1) repair(cell, String(fits[0]), name + ": " + n + " is outside " + lo + "-" + hi + "; one plausible misread fits");
+  else flag(cell, name + ": " + n + " is outside the expected " + lo + "-" + hi);
+}
+
+function isUnfilled(row){
+  return OPERATIONAL.every(function(c){ return !row[c].value; });
+}
+
+function validateRow(row, known){
+  var unfilled = isUnfilled(row);
+
+  var m = matchFlight(row.flight_no.value, known), flight = m.flight;
+  if (flight && m.distance === 0){ /* exact */ }
+  else if (flight && m.distance <= 2)
+    repair(row.flight_no, flight.flight_no, 'flight: "' + row.flight_no.value + '" corrected to ' +
+           flight.flight_no + ", the only flight that day within " + m.distance + " character(s)");
+  else if (known.length){
+    flag(row.flight_no, 'flight: "' + row.flight_no.value + '" matches no flight on this date');
+    flight = null;
   }
 
-  // Only reinterpret when the literal reading is impossible — never when it is
-  // merely unusual, or a real gate delay would be erased.
-  var impossible = delta < DEPLANE_MIN || delta > DEPLANE_HARD;
-  if (impossible && literal % 60 === 0){
-    var asMinutes = literal / 60;
-    if (asMinutes <= 59){
-      var cands = [hour + asMinutes, hour + 60 + asMinutes];
-      for (var j = 0; j < cands.length; j++){
-        var dd = cands[j] - anchor;
-        if (dd >= DEPLANE_MIN && dd <= DEPLANE_MAX){
-          return {value:cands[j], state:"repaired",
-            why:fmt(literal) + " would be " + delta + " minutes after the arrival, which cannot be right. " +
-                "The hour digits are really the minutes: " + fmt(cands[j]) + "."};
-        }
+  var etaMin = parseTime(row.eta.value);
+  if (etaMin !== null) row.eta.value = fmt(etaMin);
+  if (unfilled) return;
+
+  var ataMin = parseTime(row.ata.value);
+  if (flight && flight.touchdown !== null && flight.touchdown !== undefined){
+    if (ataMin === null){
+      repair(row.ata, fmt(flight.touchdown), "ATA: blank on paper; filled from the recorded arrival", "high");
+      ataMin = flight.touchdown;
+    } else if (Math.abs(ataMin - flight.touchdown) > 10){
+      repair(row.ata, fmt(flight.touchdown), "ATA: paper says " + fmt(ataMin) + ", recorded arrival is " +
+             fmt(flight.touchdown) + "; using the recorded time");
+      ataMin = flight.touchdown;
+    } else row.ata.value = fmt(ataMin);
+  } else if (ataMin !== null) row.ata.value = fmt(ataMin);
+  else if (row.ata.value) flag(row.ata, 'ATA: "' + row.ata.value + '" is not a readable time', "failed");
+
+  var anchor = ataMin, aName = "ATA", lo = DEPLANE_MIN, hi = DEPLANE_MAX, hard = DEPLANE_HARD;
+  if (anchor === null && etaMin !== null){ anchor = etaMin; aName = "ETA"; lo = -60; hi = 150; hard = 240; }
+
+  var first = resolveTime(row.first_pax_pil, "first passenger", anchor, aName, lo, hi, hard);
+  resolveTime(row.last_pax_pil, "last passenger", first, "first passenger", 0, PROCESSING_MAX, PROCESSING_MAX);
+
+  var seats = flight ? (SEATS[(flight.type || "").toUpperCase()] || MAX_SEATS) : MAX_SEATS;
+  intCell(row.pax_count, "passengers", 0, seats);
+  intCell(row.crew_count, "crew", 2, 6);
+  intCell(row.bso_count, "officers", 1, 25);
+
+  if (flight && flight.origin && !row.origin.value)
+    repair(row.origin, flight.origin, "origin: blank on paper; " + flight.flight_no + " came from " + flight.origin, "high");
+  else if (flight && flight.origin && row.origin.value){
+    var w = row.origin.value.toUpperCase();
+    if (w !== flight.origin.toUpperCase() && flight.origin.toUpperCase().indexOf(w) !== 0)
+      repair(row.origin, flight.origin, "origin: paper says " + row.origin.value + ", " + flight.flight_no + " came from " + flight.origin);
+  }
+}
+
+function worst(row){
+  var w = "high";
+  COLUMNS.forEach(function(c){ if (RANK[row[c].conf] > RANK[w]) w = row[c].conf; });
+  return w;
+}
+function needsReview(row){
+  if (isUnfilled(row)) return false;
+  return RANK[worst(row)] >= RANK.low;
+}
+
+/* ==========================================================================
+   3. Flight ground truth
+   ========================================================================== */
+function torontoHHMM(iso){
+  if (!iso) return null;
+  var d = new Date(iso);
+  if (isNaN(d)) return null;
+  var p = new Intl.DateTimeFormat("en-GB",{timeZone:"America/Toronto",hour:"2-digit",minute:"2-digit",hour12:false}).format(d);
+  return p;
+}
+function loadKnown(date){
+  if (!date) return Promise.resolve([]);
+  var url = SUPA + "/flights?select=flight_no,origin_code,sched_local,touchdown_at,aircraft_type&service_date=eq." + date;
+  return fetch(url, {headers:{apikey:SUPA_KEY, Authorization:"Bearer " + SUPA_KEY}})
+    .then(function(r){ return r.ok ? r.json() : []; })
+    .then(function(rows){
+      return (rows || []).filter(function(r){ return r.flight_no; }).map(function(r){
+        var td = torontoHHMM(r.touchdown_at);
+        return {flight_no:r.flight_no, origin:r.origin_code, type:r.aircraft_type,
+                touchdown: td ? parseTime(td) : null};
+      });
+    })
+    .catch(function(){ return []; });
+}
+/* The Date box is often blank; the flight list identifies the day. */
+function inferDate(written){
+  var digits = {}, n = 0;
+  written.forEach(function(f){ var d = digitsOf(f); if (d){ if(!digits[d]) n++; digits[d] = 1; } });
+  if (!n) return Promise.resolve(null);
+  var days = [];
+  for (var i = 0; i < 8; i++){
+    var d = new Date(Date.now() - i*86400000);
+    days.push(d.toISOString().slice(0,10));
+  }
+  return Promise.all(days.map(loadKnown)).then(function(all){
+    var best = null, score = 0;
+    all.forEach(function(known, i){
+      if (!known.length) return;
+      var hit = 0;
+      Object.keys(digits).forEach(function(d){
+        if (known.some(function(k){ return digitsOf(k.flight_no) === d; })) hit++;
+      });
+      var s = hit / n;
+      if (s > score){ score = s; best = days[i]; }
+    });
+    return score >= 0.8 ? best : null;   // a weak match would anchor to the wrong day
+  });
+}
+
+/* ==========================================================================
+   4. Reading the photograph
+   ========================================================================== */
+var PROMPT = [
+"Transcribe this photographed shift log sheet.",
+"",
+'The page is titled "Daily Shift Report (Primary Inspection Line)". Its header is',
+"two tiers - grouping labels on top, real column names underneath:",
+"",
+"  FLIGHT # | ORIGIN CODE | TIMES(ETA, ATA) | COUNTS(CREW, PAX) |",
+"  TIMES(FIRST PAX, LAST PAX) | GATE | BSO's",
+"",
+"Map them to these fields, left to right:",
+"  flight_no      digits only is normal (\"2118\", \"8548\") - do NOT add an airline",
+"                 prefix, transcribe what is on the page",
+"  origin         three-letter code, e.g. EWR BOS LGA ORD IAD MDW BNA",
+"  eta            first TIMES column",
+"  ata            second TIMES column",
+"  crew_count     first COUNTS column",
+"  pax_count      second COUNTS column",
+"  first_pax_pil  third TIMES column",
+"  last_pax_pil   fourth TIMES column",
+"  gate",
+"  bso_count      the \"BSO's\" column",
+"",
+"Two kinds of content share this page, and the difference matters:",
+"",
+"  Pre-written before the shift: flight_no, origin, eta, and usually crew_count.",
+"  Neat and complete down the page.",
+"",
+"  Filled in during the shift: ata, pax_count, first_pax_pil, last_pax_pil, gate,",
+"  bso_count. On most rows these are EMPTY because the flight has not landed yet.",
+"  That is normal - return null. Never carry a value down from the row above and",
+"  never invent a plausible number for a blank cell. A wrongly-filled blank is far",
+"  worse than an empty one.",
+"",
+"Transcribe EXACTLY what is written. Do not correct, tidy, or infer:",
+"- Times are usually four digits with no separator (\"0800\"). Copy that form.",
+"- If a time reads \"18\" and you think it means 10:18, write \"18\". A separate",
+"  program resolves shorthand using flight data you cannot see.",
+"- If a digit is genuinely ambiguous, give your best reading AND name that field",
+"  in illegible_fields for that row.",
+"",
+"Read the service date from the box at the top. If blank, leave service_date null.",
+"Return one entry per flight row, top to bottom, skipping headers and blank lines."
+].join("\n");
+
+var SCHEMA = {
+  type:"object",
+  properties:{
+    service_date:{type:["string","null"]},
+    rows:{type:"array", items:{
+      type:"object",
+      properties:{
+        flight_no:{type:["string","null"]}, origin:{type:["string","null"]},
+        eta:{type:["string","null"]}, ata:{type:["string","null"]},
+        crew_count:{type:["string","null"]}, pax_count:{type:["string","null"]},
+        first_pax_pil:{type:["string","null"]}, last_pax_pil:{type:["string","null"]},
+        gate:{type:["string","null"]}, bso_count:{type:["string","null"]},
+        illegible_fields:{type:"array", items:{type:"string"}}
+      },
+      required:["flight_no","origin","eta","ata","crew_count","pax_count",
+                "first_pax_pil","last_pax_pil","gate","bso_count","illegible_fields"],
+      additionalProperties:false
+    }}
+  },
+  required:["service_date","rows"],
+  additionalProperties:false
+};
+
+function readSheet(base64, mediaType, key){
+  return fetch("https://api.anthropic.com/v1/messages", {
+    method:"POST",
+    headers:{
+      "content-type":"application/json",
+      "x-api-key":key,
+      "anthropic-version":"2023-06-01",
+      "anthropic-dangerous-direct-browser-access":"true"
+    },
+    body: JSON.stringify({
+      model: MODEL,
+      max_tokens: 16000,
+      output_config: {format:{type:"json_schema", schema:SCHEMA}, effort:"high"},
+      messages:[{role:"user", content:[
+        {type:"image", source:{type:"base64", media_type:mediaType, data:base64}},
+        {type:"text", text:PROMPT}
+      ]}]
+    })
+  }).then(function(res){
+    return res.json().then(function(body){
+      if (!res.ok){
+        var msg = (body && body.error && body.error.message) || ("HTTP " + res.status);
+        if (res.status === 401) msg = "That API key was rejected. Check it and save again.";
+        if (res.status === 429) msg = "Rate limited by the API. Wait a moment and try again.";
+        throw new Error(msg);
       }
-    }
-  }
-
-  if (delta < DEPLANE_MIN){
-    return {value:literal, state:"flagged",
-      why:fmt(literal) + " is before the aircraft was on the ground at " + fmt(anchor) +
-          ". A passenger cannot reach the hall first, so this needs a person."};
-  }
-  if (delta > DEPLANE_HARD){
-    return {value:literal, state:"flagged",
-      why:fmt(literal) + " is " + delta + " minutes after the arrival — too long to be a transcription of this line."};
-  }
-  return {value:literal, state:"flagged",
-    why:fmt(literal) + " is " + delta + " minutes after the arrival. Longer than usual, but a blocked gate looks " +
-        "exactly like this, so the value is kept and raised for confirmation rather than changed."};
+      if (body.stop_reason === "refusal") throw new Error("The model declined to read this image.");
+      var text = (body.content || []).filter(function(b){ return b.type === "text"; }).map(function(b){ return b.text; }).join("");
+      if (!text) throw new Error("The model returned nothing to read.");
+      return JSON.parse(text);
+    });
+  });
 }
 
-var VERDICT_CLASS = {clean:"clean", repaired:"repaired", flagged:"bad"};
-var VERDICT_LABEL = {clean:"Accepted as written", repaired:"Corrected", flagged:"Needs a person"};
+/* ==========================================================================
+   5. Wiring
+   ========================================================================== */
+var savedKey = "";
+try { savedKey = localStorage.getItem(KEY_STORE) || ""; } catch(e){}
+if (savedKey) $("key").value = savedKey;
 
-function run(){
-  var out = resolve(document.getElementById("ata").value, document.getElementById("first").value);
-  var el = document.getElementById("verdict");
-  el.className = "verdict " + VERDICT_CLASS[out.state];
-  el.innerHTML = '<div class="headline">' + VERDICT_LABEL[out.state] +
-    (out.value !== null ? " &nbsp;&rarr;&nbsp; " + fmt(out.value) : "") + "</div>" +
-    '<div class="why">' + esc(out.why) + "</div>";
+$("saveKey").addEventListener("click", function(){
+  var v = $("key").value.trim();
+  try { v ? localStorage.setItem(KEY_STORE, v) : localStorage.removeItem(KEY_STORE); } catch(e){}
+  savedKey = v;
+  $("status").textContent = v ? "Key saved on this device." : "Key cleared.";
+});
+
+$("drop").addEventListener("dragover", function(e){ e.preventDefault(); $("drop").classList.add("over"); });
+$("drop").addEventListener("dragleave", function(){ $("drop").classList.remove("over"); });
+$("drop").addEventListener("drop", function(e){
+  e.preventDefault(); $("drop").classList.remove("over");
+  if (e.dataTransfer.files[0]) handle(e.dataTransfer.files[0]);
+});
+$("file").addEventListener("change", function(e){ if (e.target.files[0]) handle(e.target.files[0]); });
+
+function setStatus(html){ $("status").innerHTML = html; }
+
+/* Phone photos are far larger than the model needs. Scaling down keeps the
+   upload quick without losing the handwriting. */
+function toBase64(file){
+  return new Promise(function(resolve, reject){
+    var img = new Image(), url = URL.createObjectURL(file);
+    img.onload = function(){
+      URL.revokeObjectURL(url);
+      var max = 1900, scale = Math.min(1, max / Math.max(img.width, img.height));
+      var c = document.createElement("canvas");
+      c.width = Math.round(img.width * scale); c.height = Math.round(img.height * scale);
+      c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+      var data = c.toDataURL("image/jpeg", 0.92);
+      resolve({b64:data.split(",")[1], type:"image/jpeg"});
+    };
+    img.onerror = function(){ URL.revokeObjectURL(url); reject(new Error("That file could not be opened as an image.")); };
+    img.src = url;
+  });
 }
+
+function handle(file){
+  var key = (savedKey || $("key").value).trim();
+  if (!key){ setStatus('<span class="err">Enter your Anthropic API key first.</span>'); return; }
+  $("resultCard").hidden = true; $("actions").hidden = true;
+  setStatus('<span class="spin"></span>Reading the sheet — this usually takes 20 to 40 seconds.');
+
+  toBase64(file)
+    .then(function(img){ return readSheet(img.b64, img.type, key); })
+    .then(function(raw){
+      setStatus('<span class="spin"></span>Checking against known flights…');
+      var rows = (raw.rows || []).map(function(r){
+        var row = {};
+        COLUMNS.forEach(function(c){ row[c] = mkCell(r[c]); });
+        (r.illegible_fields || []).forEach(function(f){ if (row[f]) flag(row[f], "the handwriting was ambiguous"); });
+        return row;
+      });
+      var date = raw.service_date;
+      var step = date ? Promise.resolve(date)
+                      : inferDate(rows.map(function(r){ return r.flight_no.value; }));
+      return step.then(function(d){
+        return loadKnown(d).then(function(known){
+          rows.forEach(function(r){ validateRow(r, known); });
+          render(rows, d, !raw.service_date && d, known.length);
+          setStatus("");
+        });
+      });
+    })
+    .catch(function(err){ setStatus('<span class="err">' + esc(err.message) + "</span>"); });
+}
+
+var CURRENT = [];
+function render(rows, date, inferred, knownCount){
+  CURRENT = rows;
+  var review = rows.filter(needsReview).length;
+  var filled = rows.filter(function(r){ return !isUnfilled(r); }).length;
+
+  $("bar").innerHTML =
+    "<span>Date <b>" + esc(date || "not found") + (inferred ? " (from the flight list)" : "") + "</b></span>" +
+    "<span>Rows <b>" + rows.length + "</b></span>" +
+    "<span>Filled in <b>" + filled + "</b></span>" +
+    "<span" + (review ? ' class="warn"' : "") + ">Needs a look <b>" + review + "</b></span>" +
+    "<span>Matched against <b>" + knownCount + "</b> known flights</span>";
+
+  var h = "<thead><tr>" + COLUMNS.map(function(c){ return "<th>" + LABELS[c] + "</th>"; }).join("") + "</tr></thead><tbody>";
+  rows.forEach(function(row, i){
+    h += '<tr class="' + (needsReview(row) ? "review" : "") + '">';
+    COLUMNS.forEach(function(col){
+      var c = row[col];
+      h += "<td><input class=\"cell " + (c.conf === "high" ? "" : c.conf) + "\" data-r=\"" + i +
+           "\" data-c=\"" + col + "\" value=\"" + esc(c.value == null ? "" : c.value) + "\">";
+      if (c.raw != null && c.raw !== c.value) h += '<div class="why was">paper: ' + esc(c.raw) + "</div>";
+      if (c.notes.length) h += '<div class="why">' + c.notes.map(esc).join("<br>") + "</div>";
+      h += "</td>";
+    });
+    h += "</tr>";
+  });
+  $("table").innerHTML = h + "</tbody>";
+  $("resultCard").hidden = false;
+  $("actions").hidden = false;
+  $("hint").textContent = review
+    ? "Amber and red cells were changed or could not be confirmed — check those against the paper."
+    : "Every filled cell passed its checks.";
+}
+
+function collect(onlyFilled){
+  var grid = {};
+  document.querySelectorAll("input.cell").forEach(function(el){
+    var r = el.dataset.r;
+    (grid[r] = grid[r] || {})[el.dataset.c] = el.value;
+  });
+  return Object.keys(grid).sort(function(a,b){ return a - b; })
+    .filter(function(i){
+      if (!onlyFilled) return true;
+      return OPERATIONAL.some(function(c){ return (grid[i][c] || "").trim(); });
+    })
+    .map(function(i){ return COLUMNS.map(function(c){ return grid[i][c] || ""; }).join("\t"); })
+    .join("\n");
+}
+function doCopy(onlyFilled){
+  var text = collect(onlyFilled);
+  if (!text){ $("hint").textContent = "Nothing to copy."; return; }
+  navigator.clipboard.writeText(text).then(function(){
+    var n = text.split("\n").length;
+    $("hint").innerHTML = '<span class="ok">Copied ' + n + ' row' + (n === 1 ? "" : "s") + " — paste with Ctrl+V.</span>";
+  }).catch(function(){
+    $("hint").textContent = "Could not reach the clipboard; select the table and copy manually.";
+  });
+}
+$("copy").addEventListener("click", function(){ doCopy(false); });
+$("copyFilled").addEventListener("click", function(){ doCopy(true); });
+
 function esc(s){
   return String(s).replace(/[&<>"']/g, function(c){
     return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];
   });
 }
-
-document.getElementById("ata").addEventListener("input", run);
-document.getElementById("first").addEventListener("input", run);
-Array.prototype.forEach.call(document.querySelectorAll(".chip"), function(chip){
-  chip.addEventListener("click", function(){
-    document.getElementById("ata").value = chip.dataset.ata;
-    document.getElementById("first").value = chip.dataset.first;
-    run();
-  });
-});
-
-/* The worked examples table is generated by the same code that powers the box
-   above, so the page cannot drift out of step with its own logic. */
-var EXAMPLES = [
-  ["10:00", "18",    "shorthand minutes"],
-  ["10:00", "18:00", "shorthand that was written out in full"],
-  ["10:50", "05",    "shorthand crossing into the next hour"],
-  ["10:00", "09:30", "impossible ordering"],
-  ["10:00", "11:00", "a real, unusually long wait"],
-  ["07:44", "08:01", "an ordinary row"]
-];
-document.getElementById("examples").innerHTML = EXAMPLES.map(function(row){
-  var ata = row[0], written = row[1], label = row[2];
-  var out = resolve(ata, written);
-  var changed = out.state === "repaired";
-  var cls = changed ? "changed" : (out.state === "clean" ? "kept" : "");
-  var result = out.value === null ? "—" :
-    (changed ? '<span class="strike">' + esc(written) + '</span><span class="arrow">&rarr;</span>' + fmt(out.value)
-             : fmt(out.value));
-  return '<tr class="' + cls + '"><td>on the ground ' + esc(ata) + "<br>written " + esc(written) +
-         "</td><td>" + result + "</td><td class=\"note\"><b>" + esc(label) + "</b><br>" + esc(out.why) + "</td></tr>";
-}).join("");
-
-run();
 </script>
 </body>
 </html>

@@ -28,7 +28,18 @@ if (DRY_RUN) console.log("*** DRY RUN — no database writes ***");
 
 const ARRIVALS_URL = "https://www.billybishopairport.com/flights/arrivals/";
 const DEPARTURES_URL = "https://www.billybishopairport.com/flights/departures/";
-const ADSB_URL = "https://api.airplanes.live/v2/point/43.6275/-79.3962/250";
+/* RADAR SOURCES, tried in order.
+   airplanes.live closed its free API (every request now returns 403 with
+   "Check auth key"), which silently emptied the map and pushed every arrival
+   time back onto the airport's published estimate. One hard-coded feed was a
+   single point of failure, so there are now several: they all publish the same
+   readsb JSON, differing only in the key holding the aircraft array.
+   Radius is in nautical miles; 250 is the maximum these feeds allow and is
+   roughly the 460 km we want around YTZ. */
+const ADSB_SOURCES = [
+  { name: "adsb.lol", url: "https://api.adsb.lol/v2/point/43.6275/-79.3962/250", key: "ac" },
+  { name: "adsb.fi", url: "https://opendata.adsb.fi/api/v2/lat/43.6275/lon/-79.3962/dist/250", key: "aircraft" },
+];
 
 const YTZ = { lat: 43.6275, lon: -79.3962 };
 /* HOW LONG ONE RUN KEEPS SWEEPING.
@@ -41,7 +52,11 @@ const YTZ = { lat: 43.6275, lon: -79.3962 };
    Sweeping for ~3 hours means coverage is continuous even at the worst
    observed spacing. Actions is free and unlimited on public repos, and
    cancel-in-progress means a fresh run simply replaces this one. */
-const RUN_MS = process.env.DRY_RUN === "1" ? 20_000 : 175 * 60_000;
+/* Just under the 30-minute schedule, so a run finishes and prints its summary
+   instead of being cancelled mid-sweep by the next one. Perpetually-cancelled
+   runs are why a dead radar feed went unnoticed: the "done:" line that would
+   have reported zero sweeps never got a chance to print. */
+const RUN_MS = process.env.DRY_RUN === "1" ? 20_000 : 27 * 60_000;
 const SWEEP_MS = 15_000;  // radar sample every 15 s
 const UA = "syedsgroup-ytz-board/1.0 (+ops dashboard)";
 
@@ -250,17 +265,40 @@ async function fetchPage(url) {
   return await res.text();
 }
 
+/* Remember which source answered last so we try it first next sweep. */
+let radarSourceIdx = 0;
+let radarFailStreak = 0;
+
 async function fetchRadar() {
-  try {
-    const res = await fetch(ADSB_URL, {
-      headers: { "User-Agent": UA },
-      signal: AbortSignal.timeout(15_000),
-    });
-    if (!res.ok) return [];
-    return (await res.json()).ac || [];
-  } catch {
-    return [];                    // a radar blip must never crash the run
+  let lastError = "";
+  for (let i = 0; i < ADSB_SOURCES.length; i++) {
+    const src = ADSB_SOURCES[(radarSourceIdx + i) % ADSB_SOURCES.length];
+    try {
+      const res = await fetch(src.url, {
+        headers: { "User-Agent": UA },
+        signal: AbortSignal.timeout(15_000),
+      });
+      if (!res.ok) { lastError = `${src.name} HTTP ${res.status}`; continue; }
+      const list = (await res.json())[src.key] || [];
+      if (!list.length) { lastError = `${src.name} returned no aircraft`; continue; }
+      radarSourceIdx = (radarSourceIdx + i) % ADSB_SOURCES.length;
+      if (radarFailStreak) {
+        console.log(`radar recovered via ${src.name} after ${radarFailStreak} failed sweep(s)`);
+        radarFailStreak = 0;
+      }
+      return list;
+    } catch (e) {
+      lastError = `${src.name} ${e.message}`;
+    }
   }
+  // A radar blip must never crash the run - but it must never be silent
+  // either. Swallowing this is exactly how a dead feed went unnoticed while
+  // the board quietly degraded to airport-published times.
+  radarFailStreak++;
+  if (radarFailStreak === 1 || radarFailStreak % 20 === 0) {
+    console.error(`RADAR UNAVAILABLE (${radarFailStreak} consecutive): ${lastError}`);
+  }
+  return [];
 }
 
 /* Marketing number (AC8548) -> the callsign the aircraft actually broadcasts.
