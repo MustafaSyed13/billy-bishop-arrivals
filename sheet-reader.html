@@ -31,9 +31,17 @@ a{color:var(--blue);text-decoration:none}a:hover{text-decoration:underline}
 .brand-sub{font-size:10px;letter-spacing:1.4px;color:#9fb3c8;margin-top:2px}
 .back{color:#cfe0f0;font-size:13px}
 
-main{max-width:1240px;margin:0 auto;padding:20px 20px 40px}
+main{max-width:1400px;margin:0 auto;padding:20px 20px 40px}
 .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;
   padding:18px;margin-bottom:14px;box-shadow:0 2px 8px rgba(23,33,46,.06)}
+
+/* ---- step framing ---- */
+.step{display:flex;gap:10px;align-items:flex-start;margin-bottom:4px}
+.step-num{flex:none;width:22px;height:22px;border-radius:50%;background:var(--navy);color:#fff;
+  font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;margin-top:1px}
+.step-num.done{background:var(--green)}
+.step-body{flex:1;min-width:0}
+.step-title{font-size:14px;font-weight:600;margin-bottom:8px}
 
 /* ---- key setup ---- */
 .keyrow{display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap}
@@ -43,12 +51,17 @@ label{display:block;font-size:10.5px;letter-spacing:.6px;text-transform:uppercas
 input[type=password],input[type=text]{width:100%;font-family:var(--mono);font-size:13px;
   padding:9px 11px;border:1px solid var(--line);border-radius:7px;background:#fafbfd;color:var(--text)}
 input:focus{outline:none;border-color:var(--amber);background:#fff}
+input.flash{border-color:var(--red);background:#fff5f6}
 .keynote{font-size:11.5px;color:var(--dim);margin-top:9px;line-height:1.5}
+.keystatus{font-size:12px;margin-top:8px;display:none;align-items:center;gap:6px}
+.keystatus.show{display:flex}
+.keystatus .dot{width:7px;height:7px;border-radius:50%;background:var(--green)}
 
 /* ---- upload ---- */
 .drop{border:2px dashed var(--line);border-radius:11px;padding:38px 20px;text-align:center;
-  cursor:pointer;background:#fafbfd;display:block}
+  cursor:pointer;background:#fafbfd;display:block;transition:opacity .15s}
 .drop:hover,.drop.over{border-color:var(--amber);background:#fffdf7}
+.drop.locked{opacity:.5;cursor:not-allowed}
 .drop .big{font-size:16px;font-weight:600;margin-bottom:5px}
 .drop .small{font-size:12.5px;color:var(--dim)}
 input[type=file]{display:none}
@@ -65,17 +78,20 @@ input[type=file]{display:none}
 .bar b{font-family:var(--mono)}
 .bar .warn{color:var(--red)}
 .scroll{overflow-x:auto}
-table{width:100%;border-collapse:collapse;font-size:13px}
-th{text-align:left;font-size:9.5px;letter-spacing:.5px;text-transform:uppercase;color:var(--faint);
-  padding:7px 5px;border-bottom:2px solid var(--line);white-space:nowrap}
-td{padding:3px 5px;border-bottom:1px solid var(--line-soft);vertical-align:top}
+table{width:100%;border-collapse:collapse;font-size:12.5px}
+th{text-align:left;font-size:9.5px;letter-spacing:.4px;text-transform:uppercase;color:var(--faint);
+  padding:7px 4px;border-bottom:2px solid var(--line);white-space:nowrap}
+th.grp{border-bottom:1px solid var(--line-soft);color:var(--dim);font-weight:700}
+td{padding:3px 4px;border-bottom:1px solid var(--line-soft);vertical-align:top}
 tr.review{background:#fff9ec}
-.cell{width:100%;min-width:64px;border:1px solid transparent;border-radius:5px;padding:4px 5px;
-  font-family:var(--mono);font-size:13px;background:transparent;color:var(--text)}
+tr.cancelled{background:#f4f5f7}
+tr.cancelled input.cell{color:var(--faint);font-style:italic}
+.cell{width:100%;min-width:46px;border:1px solid transparent;border-radius:5px;padding:4px 4px;
+  font-family:var(--mono);font-size:12.5px;background:transparent;color:var(--text)}
 .cell:focus{border-color:var(--amber);background:#fff;outline:none}
 .cell.medium{border-left:3px solid var(--amber)}
 .cell.low,.cell.failed{border-left:3px solid var(--red);background:#fff5f6}
-.why{font-size:10px;color:var(--dim);line-height:1.4;margin-top:2px;max-width:190px}
+.why{font-size:9.5px;color:var(--dim);line-height:1.35;margin-top:2px;max-width:170px}
 .was{color:var(--faint);font-style:italic}
 
 .actions{position:fixed;bottom:0;left:0;right:0;background:var(--panel);
@@ -108,27 +124,44 @@ footer{border-top:1px solid var(--line);padding:16px 24px;font-size:11px;color:v
 <main>
 
 <div class="card" id="setupCard">
-  <div class="keyrow">
-    <div>
-      <label for="key">Anthropic API key</label>
-      <input type="password" id="key" placeholder="sk-ant-..." autocomplete="off" spellcheck="false">
+  <div class="step">
+    <div class="step-num" id="stepNum1">1</div>
+    <div class="step-body">
+      <div class="step-title">Paste an Anthropic API key</div>
+      <div class="keyrow">
+        <div>
+          <label for="key">API key</label>
+          <input type="password" id="key" placeholder="sk-ant-..." autocomplete="off" spellcheck="false">
+        </div>
+        <button id="saveKey">Save</button>
+      </div>
+      <div class="keystatus" id="keyStatus"><span class="dot"></span><span id="keyStatusText"></span></div>
+      <div class="keynote">
+        Stored only in this browser, on this device, and sent only to Anthropic when you read a sheet —
+        it never touches this website or anywhere else.
+        Don't have one? Create a free account and a key at
+        <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener noreferrer">console.anthropic.com/settings/keys</a>
+        (a new account includes free credit; reading one sheet costs a fraction of a cent after that).
+        The photograph itself is uploaded to Anthropic to be read — don't use this for material you
+        aren't permitted to send off-site.
+      </div>
     </div>
-    <button id="saveKey">Save</button>
-  </div>
-  <div class="keynote">
-    Stored only in this browser and sent only to Anthropic when you read a sheet.
-    Get one at <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener noreferrer">console.anthropic.com</a>.
-    The photograph is uploaded to Anthropic to be read — do not use this for material you are not permitted to send off-site.
   </div>
 </div>
 
 <div class="card">
-  <label class="drop" id="drop" for="file">
-    <div class="big">Take a photo of the sheet</div>
-    <div class="small">Or drop an image here. Whole page, square-on, good light.</div>
-  </label>
-  <input type="file" id="file" accept="image/*" capture="environment">
-  <div class="status" id="status"></div>
+  <div class="step">
+    <div class="step-num" id="stepNum2">2</div>
+    <div class="step-body">
+      <div class="step-title">Photograph the sheet</div>
+      <label class="drop" id="drop" for="file">
+        <div class="big" id="dropBig">Take a photo of the sheet</div>
+        <div class="small" id="dropSmall">Or drop an image here. Whole page, square-on, good light.</div>
+      </label>
+      <input type="file" id="file" accept="image/*" capture="environment">
+      <div class="status" id="status"></div>
+    </div>
+  </div>
 </div>
 
 <div class="card" id="resultCard" hidden>
@@ -156,6 +189,18 @@ var $ = function(id){ return document.getElementById(id); };
 
 /* ==========================================================================
    1. Settings
+
+   The columns below match the real "Billy Bishop Toronto City Airport -
+   Daily Shift Report" workbook, column for column, B through R:
+
+     B flight_no   C origin   D eta   E ata   F crew_count   G pax_count
+     H first_pax_pil   I last_pax_pil   J net_process_time   K gate
+     L bso_count   M supt   N ref_cust   O ref_imm   P ref_cfia
+     Q baggage_exams   R acquittals
+
+   net_process_time is column J = "=I-H" in the real workbook - a formula,
+   never handwritten. It is computed here from the two PIL times, the model
+   is never asked to read it, and it is not in the JSON schema below.
    ========================================================================== */
 var KEY_STORE = "ytz-reader-key";
 var SUPA = "https://crrrykfftzlzymmmawsn.supabase.co/rest/v1";
@@ -163,11 +208,33 @@ var SUPA_KEY = "sb_publishable_b5eZTW04X5TiOo_vt190Rg_rRLkz3Gf";
 var MODEL = "claude-opus-5";
 
 var COLUMNS = ["flight_no","origin","eta","ata","crew_count","pax_count",
-               "first_pax_pil","last_pax_pil","gate","bso_count"];
-var LABELS = {flight_no:"Flight",origin:"Origin",eta:"ETA",ata:"ATA",crew_count:"Crew",
-              pax_count:"Pax",first_pax_pil:"First pax",last_pax_pil:"Last pax",
-              gate:"Gate",bso_count:"BSOs"};
+               "first_pax_pil","last_pax_pil","net_process_time","gate","bso_count",
+               "supt","ref_cust","ref_imm","ref_cfia","baggage_exams","acquittals"];
+var LABELS = {
+  flight_no:"Flight", origin:"Origin", eta:"ETA", ata:"ATA",
+  crew_count:"Crew", pax_count:"Pax",
+  first_pax_pil:"1st pax", last_pax_pil:"Last pax", net_process_time:"Net",
+  gate:"Gate", bso_count:"BSO", supt:"Supt",
+  ref_cust:"Cust", ref_imm:"Imm", ref_cfia:"CFIA",
+  baggage_exams:"Bags", acquittals:"Acq",
+};
+// Two-tier header groups, matching the workbook's own D2:E2 "TIMES",
+// F2:G2 "COUNT", N2:P2 "# OF REFERRALS" merged cells.
+var GROUPS = [
+  {label:"", span:2},                 // flight_no, origin
+  {label:"TIMES", span:2},            // eta, ata
+  {label:"COUNT", span:2},            // crew_count, pax_count
+  {label:"PIL TIMES", span:2},        // first_pax_pil, last_pax_pil
+  {label:"", span:3},                 // net_process_time, gate, bso_count
+  {label:"", span:1},                 // supt
+  {label:"# OF REFERRALS", span:3},   // ref_cust, ref_imm, ref_cfia
+  {label:"", span:2},                 // baggage_exams, acquittals
+];
+// Fields that only get written once the flight has actually landed. A sheet
+// fresh for the day is mostly pre-written schedule with these still blank -
+// that is normal, not an error, and drives the unfilled/pending detection.
 var OPERATIONAL = ["ata","pax_count","first_pax_pil","last_pax_pil","gate","bso_count"];
+var CANCELLED_RE = /^cancell?ed$/i;
 
 /* ==========================================================================
    2. The repair engine — same rules as the Python validator
@@ -309,8 +376,13 @@ function resolveTime(cell, name, anchor, anchorName, lo, hi, hard){
   return literal;
 }
 
+/* Numeric counts (pax, crew, BSOs) - range-checked and digit-repaired against
+   known aircraft capacity / crew size, same as the Python validator. A
+   cancelled flight often has the literal word CANCELLED here instead of a
+   number; recognise it and leave it alone rather than flagging it broken. */
 function intCell(cell, name, lo, hi){
   if (!cell.value) return;
+  if (CANCELLED_RE.test(cell.value.trim())){ cell.value = "CANCELLED"; return; }
   var d = digitsOf(cell.value);
   if (!d){ flag(cell, name + ': "' + cell.value + '" is not a number', "failed"); return; }
   var n = +d; cell.value = String(n);
@@ -321,12 +393,56 @@ function intCell(cell, name, lo, hi){
   else flag(cell, name + ": " + n + " is outside the expected " + lo + "-" + hi);
 }
 
+/* SUPT is a single Y or N. Normalise case and spelling; anything else is
+   flagged rather than guessed. */
+function suptCell(cell){
+  if (!cell.value) return;
+  var v = cell.value.trim();
+  if (CANCELLED_RE.test(v)){ cell.value = "CANCELLED"; return; }
+  var u = v.toUpperCase();
+  if (u === "Y" || u === "YES"){ cell.value = "Y"; return; }
+  if (u === "N" || u === "NO"){ cell.value = "N"; return; }
+  flag(cell, 'SUPT: "' + v + '" is not Y or N', "low");
+}
+
+/* Referrals, baggage exams, acquittals: there is no ground truth to repair
+   these against (unlike a flight number or a known touchdown time), so this
+   only normalises a clean number and flags anything that is neither a number
+   nor CANCELLED. On the real sheet a zero count is usually left blank rather
+   than written as "0" - blank is left as blank here for the same reason. */
+function passCell(cell, name){
+  if (!cell.value) return;
+  var v = cell.value.trim();
+  if (CANCELLED_RE.test(v)){ cell.value = "CANCELLED"; return; }
+  if (/^\d+$/.test(v)){ cell.value = String(+v); return; }
+  flag(cell, name + ': "' + v + '" is not a number or CANCELLED - check the sheet', "low");
+}
+
 function isUnfilled(row){
   return OPERATIONAL.every(function(c){ return !row[c].value; });
 }
+/* Any spelling/case of the word - "cancelled", "Canceled", "CANCELLED" - is
+   folded to one canonical form up front, before isCancelled or any other
+   check runs. Doing this first (rather than inside intCell/suptCell/passCell,
+   which a cancelled row never reaches) is what makes isCancelled reliable
+   regardless of how the model happened to capitalise the word. */
+function normalizeCancelledWords(row){
+  COLUMNS.forEach(function(c){
+    var cell = row[c];
+    if (cell.value && CANCELLED_RE.test(cell.value.trim())) cell.value = "CANCELLED";
+  });
+}
+/* A cancelled flight is a handled, terminal state - not "hasn't happened
+   yet" - even though its operational cells are otherwise blank. Detected by
+   the word CANCELLED appearing anywhere the officer wrote it. */
+function isCancelled(row){
+  return COLUMNS.some(function(c){ return row[c].value === "CANCELLED"; });
+}
 
 function validateRow(row, known){
-  var unfilled = isUnfilled(row);
+  normalizeCancelledWords(row);
+  var cancelled = isCancelled(row);
+  var unfilled = !cancelled && isUnfilled(row);
 
   var m = matchFlight(row.flight_no.value, known), flight = m.flight;
   if (flight && m.distance === 0){ /* exact */ }
@@ -340,7 +456,7 @@ function validateRow(row, known){
 
   var etaMin = parseTime(row.eta.value);
   if (etaMin !== null) row.eta.value = fmt(etaMin);
-  if (unfilled) return;
+  if (unfilled || cancelled) return;
 
   var ataMin = parseTime(row.ata.value);
   if (flight && flight.touchdown !== null && flight.touchdown !== undefined){
@@ -359,12 +475,29 @@ function validateRow(row, known){
   if (anchor === null && etaMin !== null){ anchor = etaMin; aName = "ETA"; lo = -60; hi = 150; hard = 240; }
 
   var first = resolveTime(row.first_pax_pil, "first passenger", anchor, aName, lo, hi, hard);
-  resolveTime(row.last_pax_pil, "last passenger", first, "first passenger", 0, PROCESSING_MAX, PROCESSING_MAX);
+  var last  = resolveTime(row.last_pax_pil, "last passenger", first, "first passenger", 0, PROCESSING_MAX, PROCESSING_MAX);
+
+  // NET PROCESS TIME = LAST PAX - FIRST PAX, exactly the workbook's own
+  // "=I-H" formula. Computed here, never asked of the model - see note at
+  // the top of this file.
+  if (first !== null && last !== null){
+    var net = last - first;
+    if (net < 0) net += 1440;
+    row.net_process_time.value = String(net);
+  }
 
   var seats = flight ? (SEATS[(flight.type || "").toUpperCase()] || MAX_SEATS) : MAX_SEATS;
   intCell(row.pax_count, "passengers", 0, seats);
-  intCell(row.crew_count, "crew", 2, 6);
+  // A crew of 7-8 shows up for real on augmented/positioning flights in the
+  // source data, so the upper bound is wider than the typical 4-person crew.
+  intCell(row.crew_count, "crew", 2, 8);
   intCell(row.bso_count, "officers", 1, 25);
+  suptCell(row.supt);
+  passCell(row.ref_cust, "referrals (CUST)");
+  passCell(row.ref_imm, "referrals (IMM)");
+  passCell(row.ref_cfia, "referrals (CFIA)");
+  passCell(row.baggage_exams, "baggage exams");
+  passCell(row.acquittals, "acquittals");
 
   if (flight && flight.origin && !row.origin.value)
     repair(row.origin, flight.origin, "origin: blank on paper; " + flight.flight_no + " came from " + flight.origin, "high");
@@ -381,7 +514,7 @@ function worst(row){
   return w;
 }
 function needsReview(row){
-  if (isUnfilled(row)) return false;
+  if (isCancelled(row) || isUnfilled(row)) return false;
   return RANK[worst(row)] >= RANK.low;
 }
 
@@ -440,45 +573,72 @@ function inferDate(written){
 var PROMPT = [
 "Transcribe this photographed shift log sheet.",
 "",
-'The page is titled "Daily Shift Report (Primary Inspection Line)". Its header is',
-"two tiers - grouping labels on top, real column names underneath:",
+'The page is titled "Billy Bishop Toronto City Airport - Daily Shift Report"',
+"(also printed on some versions as \"Daily Shift Report (Primary Inspection",
+'Line)"). Its header is two tiers - grouping labels on top, real column names',
+"underneath:",
 "",
-"  FLIGHT # | ORIGIN CODE | TIMES(ETA, ATA) | COUNTS(CREW, PAX) |",
-"  TIMES(FIRST PAX, LAST PAX) | GATE | BSO's",
+"  FLIGHT | ORIGIN CODE | TIMES(ETA, ATA) | COUNT(CREW, PAX) |",
+"  FIRST PAX (PIL) | LAST PAX (PIL) | GATE | BSO (PIL) | SUPT (YES/NO) |",
+"  # OF REFERRALS(CUST, IMM, CFIA) | # OF BAGGAGE EXAMS |",
+"  # of Acquittals in ICS",
 "",
 "Map them to these fields, left to right:",
-"  flight_no      digits only is normal (\"2118\", \"8548\") - do NOT add an airline",
-"                 prefix, transcribe what is on the page",
-"  origin         three-letter code, e.g. EWR BOS LGA ORD IAD MDW BNA",
-"  eta            first TIMES column",
-"  ata            second TIMES column",
-"  crew_count     first COUNTS column",
-"  pax_count      second COUNTS column",
-"  first_pax_pil  third TIMES column",
-"  last_pax_pil   fourth TIMES column",
-"  gate",
-"  bso_count      the \"BSO's\" column",
+"  flight_no       digits only is normal (\"2118\",\"8548\") - no airline prefix",
+"  origin          three-letter code, e.g. EWR BOS LGA ORD IAD MDW BNA",
+"  eta             first TIMES column",
+"  ata             second TIMES column",
+"  crew_count      first COUNT column (CREW)",
+"  pax_count       second COUNT column (PAX)",
+"  first_pax_pil   FIRST PAX (PIL) column",
+"  last_pax_pil    LAST PAX (PIL) column",
+"  gate            GATE column",
+"  bso_count       BSO (PIL) column",
+"  supt            SUPT (YES/NO) column - a single letter, Y or N",
+"  ref_cust        first of the three REFERRALS columns (CUST)",
+"  ref_imm         second REFERRALS column (IMM)",
+"  ref_cfia        third REFERRALS column (CFIA)",
+"  baggage_exams   # OF BAGGAGE EXAMS column",
+"  acquittals      # of Acquittals in ICS column",
+"",
+"Do NOT read or report a \"NET PROCESS TIME\" column even if one is printed on",
+"the page - it is calculated from the two PIL times by a separate program and",
+"must never come from you.",
+"",
+"The SUPT, REFERRALS, BAGGAGE EXAMS, and ACQUITTALS columns do not appear on",
+"every printed version of this form. If one of them is genuinely not present",
+"anywhere on the page, return null for it on every row - do not guess.",
+"",
+"A cancelled flight is usually written with the word CANCELLED in place of a",
+"number, most often in the CREW or PAX cell, sometimes elsewhere too.",
+"Transcribe it as the text \"CANCELLED\" in whichever cell(s) it appears,",
+"rather than leaving the cell blank or inventing a number.",
 "",
 "Two kinds of content share this page, and the difference matters:",
 "",
-"  Pre-written before the shift: flight_no, origin, eta, and usually crew_count.",
-"  Neat and complete down the page.",
+"  Pre-written before the shift: flight_no, origin, eta, and usually",
+"  crew_count. Neat and complete down the page.",
 "",
-"  Filled in during the shift: ata, pax_count, first_pax_pil, last_pax_pil, gate,",
-"  bso_count. On most rows these are EMPTY because the flight has not landed yet.",
-"  That is normal - return null. Never carry a value down from the row above and",
-"  never invent a plausible number for a blank cell. A wrongly-filled blank is far",
-"  worse than an empty one.",
+"  Filled in during the shift: ata, pax_count, first_pax_pil, last_pax_pil,",
+"  gate, bso_count, supt, the referral counts, baggage exams, acquittals.",
+"  On most rows these are EMPTY because the flight has not landed yet. That",
+"  is normal - return null. Never carry a value down from the row above and",
+"  never invent a plausible number for a blank cell. A wrongly-filled blank",
+"  is far worse than an empty one. In particular, a referral/exam/acquittal",
+"  count of zero is usually left BLANK on this form rather than written as",
+"  \"0\" - if the cell is empty, return null, do not write \"0\" yourself.",
 "",
 "Transcribe EXACTLY what is written. Do not correct, tidy, or infer:",
 "- Times are usually four digits with no separator (\"0800\"). Copy that form.",
 "- If a time reads \"18\" and you think it means 10:18, write \"18\". A separate",
 "  program resolves shorthand using flight data you cannot see.",
-"- If a digit is genuinely ambiguous, give your best reading AND name that field",
-"  in illegible_fields for that row.",
+"- If a digit is genuinely ambiguous, give your best reading AND name that",
+"  field in illegible_fields for that row.",
 "",
-"Read the service date from the box at the top. If blank, leave service_date null.",
-"Return one entry per flight row, top to bottom, skipping headers and blank lines."
+"Read the service date from the box at the top. If blank, leave service_date",
+"null - do not guess it from the flight times.",
+"Return one entry per flight row, top to bottom, skipping headers, the",
+"TOTALS row at the bottom, and blank ruled lines."
 ].join("\n");
 
 var SCHEMA = {
@@ -493,10 +653,15 @@ var SCHEMA = {
         crew_count:{type:["string","null"]}, pax_count:{type:["string","null"]},
         first_pax_pil:{type:["string","null"]}, last_pax_pil:{type:["string","null"]},
         gate:{type:["string","null"]}, bso_count:{type:["string","null"]},
+        supt:{type:["string","null"]},
+        ref_cust:{type:["string","null"]}, ref_imm:{type:["string","null"]}, ref_cfia:{type:["string","null"]},
+        baggage_exams:{type:["string","null"]}, acquittals:{type:["string","null"]},
         illegible_fields:{type:"array", items:{type:"string"}}
       },
       required:["flight_no","origin","eta","ata","crew_count","pax_count",
-                "first_pax_pil","last_pax_pil","gate","bso_count","illegible_fields"],
+                "first_pax_pil","last_pax_pil","gate","bso_count","supt",
+                "ref_cust","ref_imm","ref_cfia","baggage_exams","acquittals",
+                "illegible_fields"],
       additionalProperties:false
     }}
   },
@@ -516,6 +681,8 @@ function readSheet(base64, mediaType, key){
     body: JSON.stringify({
       model: MODEL,
       max_tokens: 16000,
+      // High effort: reading four columns of small handwritten counts on top
+      // of the times is real work, and this is where extra thinking pays off.
       output_config: {format:{type:"json_schema", schema:SCHEMA}, effort:"high"},
       messages:[{role:"user", content:[
         {type:"image", source:{type:"base64", media_type:mediaType, data:base64}},
@@ -526,8 +693,9 @@ function readSheet(base64, mediaType, key){
     return res.json().then(function(body){
       if (!res.ok){
         var msg = (body && body.error && body.error.message) || ("HTTP " + res.status);
-        if (res.status === 401) msg = "That API key was rejected. Check it and save again.";
+        if (res.status === 401) msg = "That API key was rejected by Anthropic. Check it in Step 1 and save again.";
         if (res.status === 429) msg = "Rate limited by the API. Wait a moment and try again.";
+        if (res.status === 400 && /credit|billing/i.test(msg)) msg = "Anthropic rejected this: " + msg + " — check billing on your account at console.anthropic.com.";
         throw new Error(msg);
       }
       if (body.stop_reason === "refusal") throw new Error("The model declined to read this image.");
@@ -544,12 +712,38 @@ function readSheet(base64, mediaType, key){
 var savedKey = "";
 try { savedKey = localStorage.getItem(KEY_STORE) || ""; } catch(e){}
 if (savedKey) $("key").value = savedKey;
+updateKeyUI();
+
+function updateKeyUI(){
+  var has = !!(savedKey || $("key").value.trim());
+  var st = $("keyStatus");
+  if (savedKey){
+    st.className = "keystatus show";
+    $("keyStatusText").textContent = "Key saved on this device — you won't need to enter it again here.";
+  } else {
+    st.className = "keystatus";
+  }
+  $("stepNum1").className = has ? "step-num done" : "step-num";
+  $("stepNum1").textContent = has ? "✓" : "1";
+  var locked = !has;
+  $("drop").classList.toggle("locked", locked);
+  $("dropBig").textContent = locked ? "Add your API key above first" : "Take a photo of the sheet";
+  $("dropSmall").textContent = locked
+    ? "Step 1 needs a key before this will do anything."
+    : "Or drop an image here. Whole page, square-on, good light.";
+}
+$("key").addEventListener("input", updateKeyUI);
 
 $("saveKey").addEventListener("click", function(){
   var v = $("key").value.trim();
   try { v ? localStorage.setItem(KEY_STORE, v) : localStorage.removeItem(KEY_STORE); } catch(e){}
   savedKey = v;
-  $("status").textContent = v ? "Key saved on this device." : "Key cleared.";
+  if (v && v.indexOf("sk-ant-") !== 0){
+    setStatus('<span class="err">That does not look like an Anthropic key — they start with "sk-ant-". Saved anyway; fix it if the next step fails.</span>');
+  } else {
+    setStatus(v ? "Key saved." : "Key cleared.");
+  }
+  updateKeyUI();
 });
 
 $("drop").addEventListener("dragover", function(e){ e.preventDefault(); $("drop").classList.add("over"); });
@@ -583,7 +777,12 @@ function toBase64(file){
 
 function handle(file){
   var key = (savedKey || $("key").value).trim();
-  if (!key){ setStatus('<span class="err">Enter your Anthropic API key first.</span>'); return; }
+  if (!key){
+    setStatus('<span class="err">Add your API key in Step 1 first.</span>');
+    var k = $("key"); k.classList.add("flash"); k.focus();
+    setTimeout(function(){ k.classList.remove("flash"); }, 1200);
+    return;
+  }
   $("resultCard").hidden = true; $("actions").hidden = true;
   setStatus('<span class="spin"></span>Reading the sheet — this usually takes 20 to 40 seconds.');
 
@@ -616,21 +815,31 @@ function render(rows, date, inferred, knownCount){
   CURRENT = rows;
   var review = rows.filter(needsReview).length;
   var filled = rows.filter(function(r){ return !isUnfilled(r); }).length;
+  var cancelled = rows.filter(isCancelled).length;
 
   $("bar").innerHTML =
     "<span>Date <b>" + esc(date || "not found") + (inferred ? " (from the flight list)" : "") + "</b></span>" +
     "<span>Rows <b>" + rows.length + "</b></span>" +
     "<span>Filled in <b>" + filled + "</b></span>" +
+    (cancelled ? "<span>Cancelled <b>" + cancelled + "</b></span>" : "") +
     "<span" + (review ? ' class="warn"' : "") + ">Needs a look <b>" + review + "</b></span>" +
     "<span>Matched against <b>" + knownCount + "</b> known flights</span>";
 
-  var h = "<thead><tr>" + COLUMNS.map(function(c){ return "<th>" + LABELS[c] + "</th>"; }).join("") + "</tr></thead><tbody>";
+  var groupRow = "<tr>";
+  GROUPS.forEach(function(g){ groupRow += '<th class="grp" colspan="' + g.span + '">' + esc(g.label) + "</th>"; });
+  groupRow += "</tr>";
+  var labelRow = "<tr>" + COLUMNS.map(function(c){ return "<th>" + LABELS[c] + "</th>"; }).join("") + "</tr>";
+
+  var h = "<thead>" + groupRow + labelRow + "</thead><tbody>";
   rows.forEach(function(row, i){
-    h += '<tr class="' + (needsReview(row) ? "review" : "") + '">';
+    var cls = needsReview(row) ? "review" : (isCancelled(row) ? "cancelled" : "");
+    h += '<tr class="' + cls + '">';
     COLUMNS.forEach(function(col){
       var c = row[col];
+      var editable = col !== "net_process_time";   // computed; edit the two PIL times instead
       h += "<td><input class=\"cell " + (c.conf === "high" ? "" : c.conf) + "\" data-r=\"" + i +
-           "\" data-c=\"" + col + "\" value=\"" + esc(c.value == null ? "" : c.value) + "\">";
+           "\" data-c=\"" + col + "\"" + (editable ? "" : " readonly") + " value=\"" +
+           esc(c.value == null ? "" : c.value) + "\">";
       if (c.raw != null && c.raw !== c.value) h += '<div class="why was">paper: ' + esc(c.raw) + "</div>";
       if (c.notes.length) h += '<div class="why">' + c.notes.map(esc).join("<br>") + "</div>";
       h += "</td>";
@@ -654,7 +863,8 @@ function collect(onlyFilled){
   return Object.keys(grid).sort(function(a,b){ return a - b; })
     .filter(function(i){
       if (!onlyFilled) return true;
-      return OPERATIONAL.some(function(c){ return (grid[i][c] || "").trim(); });
+      return OPERATIONAL.some(function(c){ return (grid[i][c] || "").trim(); })
+        || (grid[i].crew_count || "").trim() === "CANCELLED";
     })
     .map(function(i){ return COLUMNS.map(function(c){ return grid[i][c] || ""; }).join("\t"); })
     .join("\n");
@@ -664,7 +874,8 @@ function doCopy(onlyFilled){
   if (!text){ $("hint").textContent = "Nothing to copy."; return; }
   navigator.clipboard.writeText(text).then(function(){
     var n = text.split("\n").length;
-    $("hint").innerHTML = '<span class="ok">Copied ' + n + ' row' + (n === 1 ? "" : "s") + " — paste with Ctrl+V.</span>";
+    $("hint").innerHTML = '<span class="ok">Copied ' + n + ' row' + (n === 1 ? "" : "s") +
+      " (columns B–R) — click the FLIGHT cell for this date in the workbook and paste with Ctrl+V.</span>";
   }).catch(function(){
     $("hint").textContent = "Could not reach the clipboard; select the table and copy manually.";
   });
