@@ -52,11 +52,16 @@ const YTZ = { lat: 43.6275, lon: -79.3962 };
    Sweeping for ~3 hours means coverage is continuous even at the worst
    observed spacing. Actions is free and unlimited on public repos, and
    cancel-in-progress means a fresh run simply replaces this one. */
-/* Just under the 30-minute schedule, so a run finishes and prints its summary
-   instead of being cancelled mid-sweep by the next one. Perpetually-cancelled
-   runs are why a dead radar feed went unnoticed: the "done:" line that would
-   have reported zero sweeps never got a chance to print. */
-const RUN_MS = process.env.DRY_RUN === "1" ? 20_000 : 27 * 60_000;
+/* Sweep for hours, not minutes. GitHub throttles the 30-minute schedule to
+   whatever it feels like, so a run sized to the schedule leaves holes whenever
+   the next one is late - and a position more than two minutes old is dropped
+   by the map as stale, which is what empties it.
+   A long run keeps sweeping until the next one replaces it (cancel-in-progress),
+   so coverage is continuous whatever the scheduler does. Runs therefore show as
+   "cancelled" in the Actions list; that is expected, not a failure. The
+   heartbeat below is what tells you a run is genuinely working, and radar
+   failures now report the moment they happen rather than at the end. */
+const RUN_MS = process.env.DRY_RUN === "1" ? 20_000 : 170 * 60_000;
 const SWEEP_MS = 15_000;  // radar sample every 15 s
 const UA = "syedsgroup-ytz-board/1.0 (+ops dashboard)";
 
@@ -723,6 +728,14 @@ while (Date.now() < deadline) {
 
   const acList = await fetchRadar();
   sweeps++;
+
+  // A long run is normally cancelled by its successor, so the closing summary
+  // never prints. Without this the log goes silent for hours and there is no
+  // way to tell a working run from a wedged one.
+  if (sweeps % 20 === 0) {
+    const tracking = acList.length;
+    console.log(`sweep ${sweeps}: ${tracking} aircraft in range, ${landings} landing(s) recorded so far`);
+  }
 
   // Re-read just what's needed so a landing is never recorded twice.
   const cur = await sbFetch(

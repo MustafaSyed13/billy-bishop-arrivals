@@ -487,6 +487,76 @@ function adoptCancels(list, at) {
   state.cancelsAt = at;
 }
 
+/* Aircraft positions come from the backend, not from the browser.
+   The community ADS-B feeds that replaced airplanes.live serve no
+   Access-Control-Allow-Origin header, so a direct fetch from a page is blocked
+   before the response can be read — which is why the map went empty even
+   though the collector was tracking aircraft correctly.
+   Reading them from the backend snapshot instead is better anyway: one radar
+   fetch every 15 seconds server-side, shared by every device, rather than each
+   browser in the office hitting the feed from one shared IP. */
+function adoptServerPositions(rows, todayKey) {
+  let adopted = 0;
+  for (const r of rows) {
+    if (r.last_lat == null || r.last_lon == null) continue;
+    const day = r.service_date === todayKey ? "Today" : "Tomorrow";
+    const f = state.flights.find((x) => x.flight === r.flight_no && x.day === day);
+    if (!f) continue;
+
+    const ts = Date.parse(r.last_seen_at) || 0;
+    if (!ts) continue;
+    // A position we already hold from a newer observation wins.
+    const held = state.aircraft.get(f.flight);
+    if (held && held.ts >= ts) continue;
+
+    const alt = r.last_alt_ft;
+    const gs = r.last_gs_kt;
+    // The collector stores a null altitude when the transponder reports
+    // "ground", so a missing altitude beside a real position means parked.
+    const grounded = alt == null || (alt < 400 && (gs ?? 999) < 80);
+
+    state.aircraft.set(f.flight, {
+      cs: serverCallsign(f, r.aircraft_type),
+      reg: r.aircraft_reg || "—",
+      type: r.aircraft_type || "—",
+      hex: r.aircraft_hex || null,
+      alt: alt == null ? "ground" : alt,
+      gs: gs ?? null,
+      dist: r.last_dist_km != null ? r.last_dist_km : haversineKm({ lat: r.last_lat, lon: r.last_lon }, YTZ),
+      grounded,
+      ts,
+      lat: r.last_lat,
+      lon: r.last_lon,
+      // The backend does not record heading. An inbound aircraft is by
+      // definition pointed at the field, so bearing-to-YTZ orients the icon
+      // correctly for the case the map exists to show.
+      track: bearingTo({ lat: r.last_lat, lon: r.last_lon }, YTZ),
+    });
+    adopted++;
+  }
+  // Draw straight away rather than waiting for the next radar tick, which is
+  // the only other thing that refreshes the map.
+  if (adopted && map) updateMap();
+  return adopted;
+}
+
+/* The callsign the aircraft broadcasts, rebuilt from the flight number so the
+   Flightradar24 link still opens the live flight. Porter flies Dash 8s as PTR
+   and its Embraer jets as POE; the type tells us which. */
+function serverCallsign(f, aircraftType) {
+  const digits = f.flight.replace(/\D/g, "");
+  if (f.airlineCls !== "pd") return "JZA" + digits;
+  return (/^E/.test(aircraftType || "") ? "POE" : "PTR") + digits;
+}
+
+function bearingTo(from, to) {
+  const d = Math.PI / 180;
+  const y = Math.sin((to.lon - from.lon) * d) * Math.cos(to.lat * d);
+  const x = Math.cos(from.lat * d) * Math.sin(to.lat * d) -
+            Math.sin(from.lat * d) * Math.cos(to.lat * d) * Math.cos((to.lon - from.lon) * d);
+  return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
+}
+
 function applySupabase(payload) {
   const t = Date.parse(payload.generated_at) || 0;
   if (!t) return false;
@@ -523,6 +593,7 @@ function applySupabase(payload) {
     state.ata[ataKey(f)] = { t: ms, src: r.touchdown_source === "adsb" ? "radar" : "board" };
   }
   saveAta();
+  adoptServerPositions(payload.flights, todayKey);
 
   // Feed the cancellations panel the same way the old path did.
   state.arrRaw = payload.flights.map((r) => ({
