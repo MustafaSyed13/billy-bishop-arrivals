@@ -1416,6 +1416,7 @@ function updateMap() {
   for (const k of Object.keys(mapMarkers)) {
     if (!seen.has(k)) { map.removeLayer(mapMarkers[k]); delete mapMarkers[k]; }
   }
+  showMapEmptyState(seen.size);
   drawFocusRoute();
   renderAcPanel();          // keep the open panel's live numbers current
   // Re-frame only when the set of tracked planes changes, so user panning sticks.
@@ -1503,6 +1504,39 @@ function renderAcPanel() {
     <div class="ac-note">${esc(v.etaSub || v.ataNote || "")}<br>
       Position from ADS-B, updated ${esc(ago(s.ts))}.</div>`;
   panel.hidden = false;
+}
+
+/* An empty map is usually the right answer: between arrival banks there is
+   genuinely nothing in the air. Saying so — and naming the next arrival —
+   is the difference between "correct" and "looks broken". */
+function showMapEmptyState(drawn) {
+  const el = $("mapEmpty");
+  if (!el) return;
+  if (drawn) { el.hidden = true; return; }
+
+  const today = state.flights.filter((f) => f.day === "Today");
+  const pending = today.filter((f) => {
+    const st = (f.status || "").toLowerCase();
+    return st !== "cancelled" && !state.ata[ataKey(f)] && st !== "arrived";
+  }).sort((a, b) => arrivalOrderMinutes(a) - arrivalOrderMinutes(b));
+
+  const next = pending[0];
+  const landed = today.length - pending.length;
+
+  let sub;
+  if (next) {
+    const mins = minsUntilBoardTime(next);
+    // fmtDur already reads "in 12 min", so it needs no lead-in of its own.
+    sub = `Next in is ${next.flight} from ${next.city || next.code}` +
+          (mins > 0 && mins < 600 ? ` ${fmtDur(mins)}` : ` at ${fmt12(next.time)}`) +
+          `. It appears here once it is airborne and in radar range.`;
+  } else {
+    sub = "Every U.S. arrival for today is accounted for.";
+  }
+
+  el.innerHTML = `<b>No U.S. arrivals airborne right now</b>` +
+    `<span class="sub">${esc(sub)}${landed > 0 ? ` ${landed} of ${today.length} already handled.` : ""}</span>`;
+  el.hidden = false;
 }
 
 /* Route for the focused flight: solid = flown (origin to plane),
