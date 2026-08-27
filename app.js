@@ -26,45 +26,15 @@ const DEPS_INTERVAL_MS = 90_000;
    repo. Served from GitHub's CDN with open CORS: instant, no proxies, and it
    doesn't rate-limit when many viewers share one office IP. */
 const FEED_URL = "https://raw.githubusercontent.com/MustafaSyed13/billy-bishop-arrivals/data/board.json";
-/* RADAR SOURCES, tried in order, remembering which one worked.
-   airplanes.live closed its free API and every request now 403s, which emptied
-   the map and pushed arrival times back onto the airport's estimate. These
-   feeds publish the same readsb JSON; only the key holding the aircraft array
-   differs. Radius is nautical miles (250 is their maximum, ~460 km). */
-const ADSB_SOURCES = [
-  { name: "adsb.lol", point: "https://api.adsb.lol/v2/point/43.6275/-79.3962/250",
-    callsign: (cs) => `https://api.adsb.lol/v2/callsign/${cs}`, key: "ac" },
-  { name: "adsb.fi", point: "https://opendata.adsb.fi/api/v2/lat/43.6275/lon/-79.3962/dist/250",
-    callsign: (cs) => `https://opendata.adsb.fi/api/v2/callsign/${cs}`, key: "aircraft" },
-];
-let adsbIdx = 0;
-
-/* One aircraft list from whichever source answers. Returns [] only when they
-   all fail, and says so in the console rather than failing silently. */
-async function fetchAircraft(which) {
-  let lastErr = "";
-  for (let i = 0; i < ADSB_SOURCES.length; i++) {
-    const idx = (adsbIdx + i) % ADSB_SOURCES.length;
-    const src = ADSB_SOURCES[idx];
-    const url = typeof which === "string" ? src.callsign(which) : src.point;
-    try {
-      const res = await fetch(url, { signal: AbortSignal.timeout(9000) });
-      if (!res.ok) { lastErr = `${src.name} HTTP ${res.status}`; continue; }
-      const list = (await res.json())[src.key] || [];
-      // A callsign lookup legitimately returns nothing when that flight is not
-      // airborne, so an empty list is only a failure for the area query.
-      if (!list.length && typeof which !== "string") { lastErr = `${src.name} empty`; continue; }
-      adsbIdx = idx;
-      return list;
-    } catch (e) { lastErr = `${src.name} ${e.message}`; }
-  }
-  console.warn("ADS-B unavailable:", lastErr);
-  return [];
-}
-const BOARD_INTERVAL_MS = 60_000;
-const ADSB_BASE_MS = 15_000;      // radar poll cadence, nothing close by
-const ADSB_FAST_MS = 6_000;       // radar poll cadence with an aircraft inside 80 km
-const ADSB_ULTRA_MS = 3_000;      // radar poll cadence with an aircraft on final (< 25 km)
+/* Positions come from the collector's database, not from the browser - the
+   ADS-B networks refuse cross-origin requests. See the live position layer
+   further down for why. */const BOARD_INTERVAL_MS = 60_000;
+// Position poll cadence. The collector sweeps radar every 15 s, so polling
+// faster than that cannot make the data fresher - it only trims the client's
+// own share of the lag, which is why the fast tiers stop where they do.
+const ADSB_BASE_MS = 15_000;      // nothing close by
+const ADSB_FAST_MS = 8_000;       // an aircraft inside 80 km
+const ADSB_ULTRA_MS = 5_000;      // an aircraft on final (< 25 km)
 const ADSB_HIDDEN_INTERVAL_MS = 60_000;
 const STORE_KEY = "ytz-ata-v1";
 const BOARD_CACHE_KEY = "ytz-board-v1";
@@ -149,6 +119,7 @@ const state = {
   justLanded: new Map(),  // flightNo -> epochMs, drives the green row flash
   prevStatus: new Map(),  // flightNo|day -> last board status (to catch Arrived flips)
   boardFetchedAt: 0,
+  posFetchedAt: 0,        // last successful position poll (is the link up?)
   adsbFetchedAt: 0,
   boardError: null,
   adsbError: null,
@@ -511,6 +482,9 @@ function adoptServerPositions(rows, todayKey) {
 
     const alt = r.last_alt_ft;
     const gs = r.last_gs_kt;
+    const dist = r.last_dist_km != null
+      ? r.last_dist_km
+      : haversineKm({ lat: r.last_lat, lon: r.last_lon }, YTZ);
     // The collector stores a null altitude when the transponder reports
     // "ground", so a missing altitude beside a real position means parked.
     const grounded = alt == null || (alt < 400 && (gs ?? 999) < 80);
@@ -522,7 +496,7 @@ function adoptServerPositions(rows, todayKey) {
       hex: r.aircraft_hex || null,
       alt: alt == null ? "ground" : alt,
       gs: gs ?? null,
-      dist: r.last_dist_km != null ? r.last_dist_km : haversineKm({ lat: r.last_lat, lon: r.last_lon }, YTZ),
+      dist,
       grounded,
       ts,
       lat: r.last_lat,
@@ -532,6 +506,14 @@ function adoptServerPositions(rows, todayKey) {
       // correctly for the case the map exists to show.
       track: bearingTo({ lat: r.last_lat, lon: r.last_lon }, YTZ),
     });
+    // Alert once when an aircraft turns final. This is the only judgement the
+    // client still makes from a position; the landing time itself stays the
+    // backend's, so every device agrees on it.
+    if (!grounded && dist < 12 && (gs ?? 0) > 60 && Date.now() - ts < 5 * 60_000) {
+      const mins = Math.max(2, Math.round((dist / ((gs || 200) * 1.852)) * 60 + 3));
+      notify(`${ataKey(f)}|final`, `${f.flight} on final approach`,
+        `${f.city} to YTZ - about ${mins} min to touchdown`);
+    }
     adopted++;
   }
   // Draw straight away rather than waiting for the next radar tick, which is
@@ -770,117 +752,34 @@ function applyBoard(flights) {
   state.flights = flights;
 }
 
-/* ---------------- ADS-B live layer ---------------- */
-function matchAircraft(flight, acList) {
-  const digits = flight.flight.replace(/\D/g, "");
-  const wanted = new Set();
-  for (const p of flight.callsigns) {
-    wanted.add(p + digits);
-    // Jazz sometimes drops the leading marketing digit (AC8548 -> JZA548)
-    if (p === "JZA" && digits.length === 4) wanted.add(p + digits.slice(1));
-  }
-  let best = null;
-  for (const ac of acList) {
-    const cs = (ac.flight || "").trim().toUpperCase();
-    if (!wanted.has(cs)) continue;
-    if (ac.lat == null || ac.lon == null) continue;
-    // Every scheduled YTZ arrival is a Dash 8; reject look-alike callsigns.
-    if (ac.t && !/^DH8/.test(ac.t) && cs !== flight.callsigns[0] + digits) continue;
-    if (!best || (ac.seen_pos ?? 99) < (best.seen_pos ?? 99)) best = ac;
-  }
-  return best;
-}
-
-/* Record one radar sample for a matched flight and run the alert/touchdown
-   logic. Shared by the local point query and the long-range callsign lookups. */
-function ingestAircraft(f, ac) {
-  const dist = haversineKm({ lat: ac.lat, lon: ac.lon }, YTZ);
-  const grounded = ac.alt_baro === "ground" ||
-    (typeof ac.alt_baro === "number" && ac.alt_baro < 400 && (ac.gs ?? 999) < 80);
-  const sample = {
-    cs: (ac.flight || "").trim(), reg: ac.r || "—", type: ac.t || "—",
-    hex: ac.hex, alt: ac.alt_baro, gs: ac.gs ?? null, dist, grounded, ts: Date.now(),
-    lat: ac.lat, lon: ac.lon, track: ac.track ?? ac.true_heading ?? 0,
-  };
-  state.aircraft.set(f.flight, sample);
-  // Alert once when the aircraft turns final (inside 12 km, still flying).
-  if (!grounded && dist < 12 && (ac.gs ?? 0) > 60) {
-    const mins = Math.max(2, Math.round((dist / ((ac.gs || 200) * 1.852)) * 60 + 3));
-    notify(`${ataKey(f)}|final`, `${f.flight} on final approach`,
-      `${f.city} to YTZ - about ${mins} min to touchdown`);
-  }
-  // Remember that we genuinely saw this aircraft flying. Without this, opening
-  // the page at 13:52 and finding three aircraft already parked stamped all
-  // three as "landed 13:52" — the time WE noticed, not the time they landed.
-  // FlightAware had one of them down at 13:27, a 25 minute error.
-  if (!grounded && (ac.gs ?? 0) > 40) state.seenAirborne.set(f.flight, Date.now());
-
-  // Touchdown detection: an airborne aircraft we were watching is now on the
-  // ground at the field. The distance gate stops a pre-departure aircraft at
-  // its origin counting; the airborne gate stops an aircraft that was already
-  // parked before we ever looked. If we never saw it fly, we do not know when
-  // it landed — so we say nothing and let the airport's own time stand.
-  const airborneAt = state.seenAirborne.get(f.flight);
-  if (grounded && dist <= 4.5 && !state.ata[ataKey(f)] && airborneAt) {
-    // The aircraft came down somewhere between that last airborne fix and now.
-    // Report the midpoint, not "now" — with a 20 s poll that is a handful of
-    // seconds of error, and after a tab has been backgrounded it halves the
-    // gap instead of charging all of it to the flight.
-    const gapMs = Date.now() - airborneAt;
-    if (gapMs <= 10 * 60_000) {
-      const t = airborneAt + gapMs / 2;
-      state.ata[ataKey(f)] = { t, src: "radar" };
-      saveAta();
-      state.justLanded.set(f.flight, Date.now());
-      notify(`${ataKey(f)}|landed`, `${f.flight} landed at YTZ`,
-        `Touched down at ${fmt12FromDate(new Date(t))} from ${f.city}`);
-    }
-  }
-}
-
-/* The point query only sees ~460 km around YTZ, but LGA/BOS/ORD are farther.
-   For flights due soon that aren't tracked yet, look their callsigns up
-   directly (two per poll, rotating) so tracking starts at takeoff. */
-async function lookupDistantFlights() {
-  const nowMin = torontoMinutesNow();
-  const pending = state.flights.filter((f) => {
-    if (f.day !== "Today") return false;
-    const st = f.status.toLowerCase();
-    if (st === "cancelled" || st === "arrived" || state.ata[ataKey(f)]) return false;
-    const s = state.aircraft.get(f.flight);
-    if (s && Date.now() - s.ts < 60_000) return false;
-    const dm = minutesOfDay(f.time) - nowMin;
-    return dm > -20 && dm < 160;
-  });
-  if (!pending.length) return;
-  for (let k = 0; k < Math.min(2, pending.length); k++) {
-    const f = pending[(state.csCursor + k) % pending.length];
-    const digits = f.flight.replace(/\D/g, "");
-    const cands = f.airlineCls === "pd"
-      ? ["PTR" + digits, "POE" + digits]
-      : ["JZA" + digits.slice(1), "JZA" + digits];
-    const cand = cands[state.csTry % cands.length];
-    try {
-      const ac = matchAircraft(f, await fetchAircraft(cand));
-      if (ac) ingestAircraft(f, ac);
-    } catch {}
-  }
-  state.csCursor += 2;
-  state.csTry++;
-}
+/* ---------------- live position layer ----------------
+   The browser used to fetch aircraft positions straight from the ADS-B
+   networks. Those networks send no Access-Control-Allow-Origin header, so
+   every one of those requests was blocked by the browser and the map stayed
+   empty. curl and the GitHub runner fetch them without complaint, which is
+   exactly what hid the problem during testing.
+   The collector holds the only copy a browser can reach, so positions are
+   polled from the database instead - on their own fast cadence, not the
+   once-a-minute board cadence, because a Dash 8 on approach covers about a
+   kilometre every eight seconds.
+   Nothing here decides landing times. The backend owns those, so every screen
+   in the office shows one time instead of each browser judging for itself. */
+const POS_COLS = "flight_no,service_date,last_seen_at,last_lat,last_lon," +
+  "last_alt_ft,last_gs_kt,last_dist_km,aircraft_reg,aircraft_type,aircraft_hex";
 
 async function fetchAdsb() {
   try {
-    const list = await fetchAircraft();
-    if (!list.length) throw new Error("no ADS-B source available");
-    for (const f of state.flights) {
-      if (f.day !== "Today") continue;
-      if (f.status.toLowerCase() === "cancelled") continue;
-      const ac = matchAircraft(f, list);
-      if (ac) ingestAircraft(f, ac);
-    }
-    await lookupDistantFlights();
-    state.adsbFetchedAt = Date.now();
+    const today = torontoDateKey();
+    const url = `${SUPA_URL}/flights?select=${POS_COLS}` +
+      `&service_date=in.(${today},${torontoDateKey(1)})` +
+      `&last_lat=not.is.null&order=last_seen_at.desc&limit=120`;
+    const res = await fetch(url, {
+      headers: { apikey: SUPA_KEY },
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!res.ok) throw new Error(`positions HTTP ${res.status}`);
+    adoptServerPositions(await res.json(), today);
+    state.posFetchedAt = Date.now();
     state.adsbError = null;
   } catch (e) {
     state.adsbError = String(e.message || e);
@@ -889,6 +788,14 @@ async function fetchAdsb() {
   render();
 }
 
+/* Age of the newest airborne contact: the honest measure of how current the
+   radar picture is. Aircraft already parked are excluded, because a flight
+   that landed two hours ago is not evidence that radar has gone stale. */
+function newestAirborneObs() {
+  let newest = 0;
+  for (const s of state.aircraft.values()) if (!s.grounded && s.ts > newest) newest = s.ts;
+  return newest;
+}
 /* ---------------- derived per-flight view ---------------- */
 function minsUntilBoardTime(f) {
   let diff = minutesOfDay(f.time) - torontoMinutesNow();
@@ -1162,31 +1069,40 @@ function render() {
 
   // freshness / live indicator
   const fr = $("freshness");
+  // Two separate things can go wrong with the radar picture, and treating
+  // them as one is what left the header stuck on "RADAR DEGRADED": either the
+  // link to the position store is down, or the link is fine while the
+  // collector has stopped feeding it. They are reported apart.
+  const obs = newestAirborneObs();
+  const contacts = obs > 0;
   fr.textContent =
     `board ${state.boardFetchedAt ? ago(state.boardFetchedAt) + " ago" : "…"}` +
-    ` · radar ${state.adsbFetchedAt ? ago(state.adsbFetchedAt) + " ago" : "…"}` +
+    ` · radar ${contacts ? ago(obs) + " ago"
+        : state.posFetchedAt ? "nothing airborne" : "…"}` +
     // Say so rather than letting flights silently disappear.
     (retired ? ` · ${retired} cleared over ${RETAIN_LANDED_MIN} min ago hidden` : "");
-  // Health is reported per source rather than as one blanket "LIVE", so a
-  // current radar feed can never make a stale flight board look healthy.
   const live = $("liveDot").parentElement;
   const boardAge = Date.now() - state.boardFetchedAt;
-  const radarAge = Date.now() - state.adsbFetchedAt;
   const boardStale = boardAge > 5 * 60_000;
   const boardDead = boardAge > 20 * 60_000;
-  const radarStale = !state.adsbFetchedAt || radarAge > 90_000;
+  const linkDown = !state.posFetchedAt || Date.now() - state.posFetchedAt > 120_000;
+  // Only an airborne contact can prove the feed is current, so a quiet hour
+  // with nothing flying reads as healthy instead of as a fault.
+  const radarStale = contacts && Date.now() - obs > 6 * 60_000;
 
   live.classList.toggle("down", (!state.boardFetchedAt && !!state.boardError) || boardDead);
-  live.classList.toggle("stale", !!state.boardFetchedAt && (boardStale || radarStale) && !boardDead);
+  live.classList.toggle("stale", !!state.boardFetchedAt && (boardStale || linkDown || radarStale) && !boardDead);
   $("liveLabel").textContent =
     !state.boardFetchedAt && state.boardError ? "OFFLINE"
       : boardDead ? "DATA STALE"
       : boardStale ? "FLIGHT DATA DELAYED"
-      : radarStale ? "RADAR DEGRADED"
+      : linkDown ? "RADAR LINK DOWN"
+      : radarStale ? "RADAR DELAYED"
       : "ALL SOURCES LIVE";
   live.title =
     `Flight board: ${state.boardFetchedAt ? ago(state.boardFetchedAt) + " old" : "unavailable"}\n` +
-    `Radar: ${state.adsbFetchedAt ? ago(state.adsbFetchedAt) + " old" : "unavailable"}`;
+    `Positions: ${state.posFetchedAt ? "polled " + ago(state.posFetchedAt) + " ago" : "unavailable"}\n` +
+    `Newest airborne contact: ${contacts ? ago(obs) + " old" : "nothing airborne"}`;
 
   const banner = $("banner");
   if (state.boardError && state.boardFetchedAt) {
@@ -1366,17 +1282,78 @@ let originMarker = null;
 /* Airliner silhouette (points north, so rotate by the true track directly). */
 const PLANE_PATH = "M21 16v-2l-8-5V3.5c0-.83-.67-1.5-1.5-1.5S10 2.67 10 3.5V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5l8 2.5z";
 
+/* CARTO began burning an "API KEY REQUIRED" watermark into its free anonymous
+   tiles. The response is still HTTP 200 at a normal file size, so nothing short
+   of looking at a tile reveals it - which is how it reached production.
+   OpenStreetMap serves its own tiles with no such gate, and the CSS filter on
+   .map-tiles mutes them into the pale canvas this board is designed around.
+   Esri's grey canvas stands by in case OSM is ever unreachable. */
+const TILE_SOURCES = [
+  {
+    url: "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+    attribution: "&copy; OpenStreetMap contributors",
+    maxZoom: 16,
+  },
+  {
+    url: "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}",
+    attribution: "Tiles &copy; Esri",
+    maxZoom: 15,
+  },
+];
+let tileSourceIdx = 0;
+let tileLayer = null;
+
+function addTileLayer() {
+  const src = TILE_SOURCES[tileSourceIdx];
+  let errors = 0;
+  tileLayer = L.tileLayer(src.url, {
+    attribution: src.attribution, maxZoom: src.maxZoom, className: "map-tiles",
+  });
+  // Individual tiles fail all the time on a flaky connection. Only a provider
+  // that has actually gone away fails them in bulk, so wait for enough
+  // failures to be sure before giving up on it.
+  tileLayer.on("tileerror", () => {
+    if (++errors < 8 || tileSourceIdx >= TILE_SOURCES.length - 1) return;
+    console.warn(`basemap ${src.url} failing; falling back`);
+    tileSourceIdx++;
+    map.removeLayer(tileLayer);
+    addTileLayer();
+  });
+  tileLayer.addTo(map);
+}
+
 function initMap() {
   if (map || typeof L === "undefined") return;
   map = L.map("map", { zoomControl: true }).setView([YTZ.lat, YTZ.lon], 8);
-  // Keep the OSM/CARTO data credit (their tile terms require it) but drop the
-  // Leaflet prefix for a cleaner look.
+  // Keep the tile-source credit their terms require, minus the Leaflet prefix.
   map.attributionControl.setPrefix("");
-  L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png", {
-    attribution: "&copy; OpenStreetMap &copy; CARTO", maxZoom: 12,
-  }).addTo(map);
+  addTileLayer();
   L.circleMarker([YTZ.lat, YTZ.lon], { radius: 6, color: "#ffb52e", fillColor: "#ffb52e", fillOpacity: 1 })
     .addTo(map).bindTooltip("YTZ · Billy Bishop");
+}
+
+/* How old a fix can be and still be worth drawing. The old limit was two
+   minutes, which made aircraft blink out every time the collector missed a
+   sweep. Showing a slightly older position, clearly labelled with its age,
+   beats an empty map. */
+const POS_MAX_AGE_MS = 8 * 60_000;
+/* Never extrapolate further than this, however old the fix is. */
+const DR_MAX_MS = 150_000;
+
+/* Advance a fix along its track by however long ago it was taken. Between
+   polls the aircraft keeps flying, so drawing the raw fix leaves the icon
+   sitting where the aircraft was, not where it is - about 1 km per 8 s at
+   approach speed. An inbound aircraft is by definition pointed at the field,
+   which is what makes the projection safe to do here. */
+function projectPosition(s) {
+  const base = { lat: s.lat, lon: s.lon, dist: s.dist, est: 0 };
+  const age = Date.now() - s.ts;
+  if (s.grounded || !s.gs || s.gs < 60 || age < 5_000) return base;
+  const km = s.gs * 1.852 * (Math.min(age, DR_MAX_MS) / 3_600_000);
+  const brg = ((s.track || 0) * Math.PI) / 180;
+  const lat = s.lat + (km / 111.32) * Math.cos(brg);
+  const lon = s.lon + (km / (111.32 * Math.cos((s.lat * Math.PI) / 180))) * Math.sin(brg);
+  return { lat, lon, dist: haversineKm({ lat, lon }, YTZ), est: Math.round(age / 1000) };
 }
 
 function updateMap() {
@@ -1386,25 +1363,30 @@ function updateMap() {
   for (const f of state.flights) {
     if (f.day !== "Today") continue;
     const s = state.aircraft.get(f.flight);
-    if (!s || s.lat == null || s.grounded || Date.now() - s.ts > 120_000) continue;
+    if (!s || s.lat == null || s.grounded || Date.now() - s.ts > POS_MAX_AGE_MS) continue;
+    const p = projectPosition(s);
+    // Say so when the fix is old enough that the icon is a projection rather
+    // than an observation, so nobody reads an estimate as a sighting.
+    const stale = Date.now() - s.ts > 90_000;
     seen.add(f.flight);
-    pts.push([s.lat, s.lon]);
+    pts.push([p.lat, p.lon]);
     const rot = Math.round(s.track || 0);
     const icon = L.divIcon({
       className: "",
-      html: `<svg class="plane-svg ${f.airlineCls}${state.focus === f.flight ? " selected" : ""}" viewBox="0 0 24 24" style="transform:rotate(${rot}deg)"><path d="${PLANE_PATH}"/></svg>`,
+      html: `<svg class="plane-svg ${f.airlineCls}${state.focus === f.flight ? " selected" : ""}${stale ? " stale" : ""}" viewBox="0 0 24 24" style="transform:rotate(${rot}deg)"><path d="${PLANE_PATH}"/></svg>`,
       iconSize: [30, 30], iconAnchor: [15, 15],
     });
-    let tip = `${f.flight} · ${Math.round(s.dist)} km`;
+    let tip = `${f.flight} · ${Math.round(p.dist)} km`;
     if (state.focus === f.flight && s.gs > 40) {
-      tip += ` · ~${Math.max(1, Math.round((s.dist / (s.gs * 1.852)) * 60 + 4))} min`;
+      tip += ` · ~${Math.max(1, Math.round((p.dist / (s.gs * 1.852)) * 60 + 4))} min`;
     }
+    if (stale) tip += ` · ${ago(s.ts)} old`;
     if (mapMarkers[f.flight]) {
-      mapMarkers[f.flight].setLatLng([s.lat, s.lon]);
+      mapMarkers[f.flight].setLatLng([p.lat, p.lon]);
       mapMarkers[f.flight].setIcon(icon);
       mapMarkers[f.flight].setTooltipContent(tip);
     } else {
-      mapMarkers[f.flight] = L.marker([s.lat, s.lon], { icon })
+      mapMarkers[f.flight] = L.marker([p.lat, p.lon], { icon })
         .addTo(map)
         .bindTooltip(tip, { permanent: true, direction: "right", offset: [12, 0], className: "plane-label" })
         // Clicking an aircraft opens the detail panel, the way Flightradar24
@@ -1730,8 +1712,10 @@ setInterval(() => {
   location.reload();
 }, 120_000);
 
-/* Keep countdowns and "Xs ago" freshness text ticking. */
-setInterval(render, 5_000);
+/* Keep countdowns and "Xs ago" freshness text ticking, and walk the aircraft
+   icons forward along their tracks between polls so the map reads as motion
+   rather than as a dot that jumps every few seconds. */
+setInterval(() => { render(); updateMap(); }, 5_000);
 
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {

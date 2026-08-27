@@ -11,7 +11,7 @@
    other "bba-" cache, so one reload wipes stale copies. Bumping the ?v= on the
    script tag alone is NOT enough: it only helps once the browser has a fresh
    index.html to read the new URL from. */
-const CACHE = "bba-shell-v19";
+const CACHE = "bba-shell-v20";
 const LEGACY_CACHES = ["ytz-shell-v8"];
 const SHELL = ["index.html", "manifest.json", "icon-192.png", "icon-512.png"];
 

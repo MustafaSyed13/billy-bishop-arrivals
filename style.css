@@ -175,11 +175,18 @@ a.chip-btn { text-decoration: none; display: inline-flex; align-items: center; }
 .plane-svg { cursor: pointer; }
 .plane-svg.selected path { stroke: var(--amber); stroke-width: 2.4; }
 .leaflet-container { background: #dde6ed; font-family: var(--sans); }
+/* OpenStreetMap ships a colourful cartography meant to be read on its own.
+   Muting it turns the basemap back into a backdrop, so the aircraft and route
+   lines stay the brightest things on the map. */
+.map-tiles { filter: saturate(.25) brightness(1.06) contrast(.92); }
 .plane-svg {
   width: 30px; height: 30px; display: block;
   filter: drop-shadow(0 1px 2px rgba(20, 40, 60, .5));
 }
 .plane-svg path { stroke: #fff; stroke-width: .7; }
+/* A projected position rather than a fresh observation. Dimming it is the
+   visual half of the "N min old" the label already carries. */
+.plane-svg.stale { opacity: .45; }
 .plane-svg.pd { fill: #23485b; }
 .plane-svg.ac { fill: #d22630; }
 .plane-label {

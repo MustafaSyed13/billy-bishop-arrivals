@@ -43,25 +43,22 @@ const ADSB_SOURCES = [
 
 const YTZ = { lat: 43.6275, lon: -79.3962 };
 /* HOW LONG ONE RUN KEEPS SWEEPING.
-   This used to be 4.4 minutes, on the assumption that the 5-minute schedule
-   would start the next run straight after. It does not: GitHub throttles
-   scheduled workflows hard, and in practice runs fire every 45-90 minutes. The
-   result was roughly 6% radar coverage, so most landings were never observed
-   and fell back to the airport's published gate time - about 8 minutes later
-   than the actual touchdown.
-   Sweeping for ~3 hours means coverage is continuous even at the worst
-   observed spacing. Actions is free and unlimited on public repos, and
-   cancel-in-progress means a fresh run simply replaces this one. */
-/* Sweep for hours, not minutes. GitHub throttles the 30-minute schedule to
-   whatever it feels like, so a run sized to the schedule leaves holes whenever
-   the next one is late - and a position more than two minutes old is dropped
-   by the map as stale, which is what empties it.
-   A long run keeps sweeping until the next one replaces it (cancel-in-progress),
-   so coverage is continuous whatever the scheduler does. Runs therefore show as
-   "cancelled" in the Actions list; that is expected, not a failure. The
+   Long enough that a missed schedule does not become a hole in the data.
+   The collector originally swept for 4.4 minutes on the assumption that the
+   next scheduled run would start straight after. It does not. Measured across
+   40 hours of real run history, GitHub fired this workflow every 3 to 11 hours
+   rather than the requested 30 minutes, once leaving an 8.6 hour stretch with
+   no positions written at all - which is why aircraft only appeared on the map
+   once they were nearly overhead, and why most landings fell back to the
+   airport's published gate time about 8 minutes after the actual touchdown.
+   5.5 hours is the longest sweep that fits inside GitHub's 6 hour job ceiling.
+   Three lanes (see .github/workflows/radar-lane-a.yml) start runs about 80
+   minutes apart, so a run is already in progress whenever a fire is dropped.
+   Runs are replaced by the next fire in their own lane and so show as
+   "cancelled" in the Actions list; that is the design, not a failure. The
    heartbeat below is what tells you a run is genuinely working, and radar
-   failures now report the moment they happen rather than at the end. */
-const RUN_MS = process.env.DRY_RUN === "1" ? 20_000 : 170 * 60_000;
+   failures report the moment they happen rather than at the end. */
+const RUN_MS = process.env.DRY_RUN === "1" ? 20_000 : 330 * 60_000;
 const SWEEP_MS = 15_000;  // radar sample every 15 s
 const UA = "syedsgroup-ytz-board/1.0 (+ops dashboard)";
 

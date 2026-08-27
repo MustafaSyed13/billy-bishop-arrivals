@@ -1,16 +1,11 @@
-name: supabase-sync
+name: radar collector
 
 # Fills the Supabase database from the airport board + radar network.
-# Each run sweeps radar for ~4.4 minutes, so back-to-back runs give
-# effectively continuous ~15 second coverage. Free for public repos.
+# This file is the worker. It is never scheduled directly - the radar-lane-*
+# workflows call it. See radar-lane-a.yml for why there are three of them.
 
 on:
-  schedule:
-    # Every 30 min. Each run sweeps for ~3 h and cancel-in-progress replaces the
-    # previous one, so coverage is continuous whether GitHub honours this
-    # schedule or throttles it to 90 minutes. A tighter cron would only restart
-    # a healthy run and lose ~30 s to checkout each time.
-    - cron: "*/30 * * * *"
+  workflow_call:
   workflow_dispatch:
     inputs:
       dry_run:
@@ -21,25 +16,13 @@ on:
 permissions:
   contents: read
 
-# Each run sweeps for ~4.4 min on a 5 min schedule, so runs routinely overlap.
-# With cancel-in-progress:false GitHub keeps only ONE pending run and cancels
-# older queued ones, so scheduled runs were silently killing each other and
-# leaving multi-hour gaps in coverage. Cancelling the in-progress run instead
-# means the newest data always wins: a superseded sweep has already done its
-# work, all writes are idempotent upserts, and the replacement starts sampling
-# immediately. Freshness beats letting a stale sweep finish.
-concurrency:
-  group: supabase-sync
-  cancel-in-progress: true
-
 jobs:
   sync:
     runs-on: ubuntu-latest
-    # Each run sweeps radar for ~3 hours (see RUN_MS). Actions is free and
-    # unlimited on public repos, so a long job costs nothing and is the only
-    # way to get continuous coverage out of a schedule GitHub throttles to
-    # every 45-90 minutes.
-    timeout-minutes: 185
+    # One run sweeps for 5.5 h (see RUN_MS). GitHub's ceiling for a job is 6 h,
+    # and Actions is free and unlimited on public repos, so the longest run the
+    # platform allows is also the cheapest way to survive a missed schedule.
+    timeout-minutes: 350
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

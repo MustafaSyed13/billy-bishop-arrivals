@@ -1,0 +1,38 @@
+name: radar lane a
+
+# WHY THREE LANES.
+# The collector used to be one workflow on a */30 schedule. GitHub does not
+# honour that on a free public repo: measured over 40 h it fired roughly every
+# 3-11 h, leaving an 8.6 h hole in one stretch with no aircraft positions
+# written at all. That is what made planes appear on the map only once they
+# were nearly overhead - the collector was simply asleep for the rest of the
+# approach.
+# Two things fix it. Ask for far fewer runs, because a schedule asking for 48 a
+# day is the first thing GitHub sheds, and keep each one alive for 5.5 h so a
+# missed fire is covered by a run already in progress. Three lanes fire on
+# independent schedules roughly 80 minutes apart, so losing a lane costs
+# redundancy rather than coverage.
+# Minutes are deliberately off :00 and :30, the most contended slots on the
+# platform and the ones most likely to be dropped.
+
+on:
+  schedule:
+    - cron: "11 0-23/4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Scoped to this lane only. A new lane-a run replaces lane a's own run and
+# leaves the other lanes alone; the replacement starts sampling immediately and
+# every write is an idempotent upsert, so freshness beats letting the old sweep
+# finish. Runs therefore show as "cancelled" in the Actions list, which is
+# expected rather than a failure.
+concurrency:
+  group: radar-lane-a
+  cancel-in-progress: true
+
+jobs:
+  collect:
+    uses: ./.github/workflows/supabase-sync.yml
+    secrets: inherit
