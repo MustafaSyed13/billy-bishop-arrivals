@@ -11,7 +11,7 @@
    other "bba-" cache, so one reload wipes stale copies. Bumping the ?v= on the
    script tag alone is NOT enough: it only helps once the browser has a fresh
    index.html to read the new URL from. */
-const CACHE = "bba-shell-v20";
+const CACHE = "bba-shell-v21";
 const LEGACY_CACHES = ["ytz-shell-v8"];
 const SHELL = ["index.html", "manifest.json", "icon-192.png", "icon-512.png"];
 
@@ -55,7 +55,15 @@ self.addEventListener("fetch", (e) => {
           ? new URL("index.html" + url.search, url).href
           : e.request;
         try {
-          const fresh = await fetch(target, { redirect: "manual" });
+          // GitHub Pages serves every file with Cache-Control: max-age=600, so
+          // a plain fetch() here can silently hand back the browser's own
+          // 10-minute-old disk cache instead of ever reaching the server -
+          // "network-first" in name only. A release then only reached anyone
+          // who happened to be more than 10 minutes since their last visit,
+          // which is why a deploy could look live in a clean check and still
+          // fail to show up for someone who was just on the page. no-store
+          // forces every one of these fetches past that cache, always.
+          const fresh = await fetch(target, { redirect: "manual", cache: "no-store" });
           if (fresh && fresh.type === "opaqueredirect") throw new Error("stale cached redirect");
           if (fresh && fresh.ok) {
             c.put(target, fresh.clone());
@@ -82,7 +90,7 @@ self.addEventListener("fetch", (e) => {
     caches.open(CACHE).then(async (c) => {
       if (isAppCode) {
         try {
-          const fresh = await fetch(e.request);
+          const fresh = await fetch(e.request, { cache: "no-store" });
           if (fresh && fresh.ok) { c.put(e.request, fresh.clone()); return fresh; }
           throw new Error("asset " + (fresh && fresh.status));
         } catch {
