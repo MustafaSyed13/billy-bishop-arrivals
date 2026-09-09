@@ -168,8 +168,18 @@ function originInfo(origin) {
 }
 
 /* ---------------- Supabase over plain REST ----------------
-   No SDK required: creating the tables created these URLs automatically. */
-async function sbFetch(path, opts = {}) {
+   No SDK required: creating the tables created these URLs automatically.
+   A run is supposed to survive for 5.5 hours on the strength of a sweep loop
+   that just keeps going, but every call here used to throw straight through
+   on the first bad response - so one passing 504 from Supabase's pooler (a
+   normal, transient thing under load, not a real outage) killed the whole
+   run and every sweep it had left. Confirmed in production: a run 43 minutes
+   in, 140 clean sweeps deep, died on exactly one board_state POST timeout.
+   Retrying a handful of times with backoff is what the redundant lanes was
+   already assuming happened here. */
+const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504]);
+
+async function sbFetch(path, opts = {}, attempt = 1) {
   if (DRY_RUN) {
     if ((opts.method || "GET") !== "GET") {
       console.log(`  [dry] would ${opts.method} ${path.split("?")[0]}`);
@@ -177,17 +187,33 @@ async function sbFetch(path, opts = {}) {
     }
     return [];                     // pretend the table is empty
   }
-  const res = await fetch(`${SB_URL}/rest/v1/${path}`, {
-    ...opts,
-    headers: {
-      apikey: SB_KEY,
-      Authorization: `Bearer ${SB_KEY}`,
-      "Content-Type": "application/json",
-      ...(opts.headers || {}),
-    },
-  });
+  let res;
+  try {
+    res = await fetch(`${SB_URL}/rest/v1/${path}`, {
+      ...opts,
+      headers: {
+        apikey: SB_KEY,
+        Authorization: `Bearer ${SB_KEY}`,
+        "Content-Type": "application/json",
+        ...(opts.headers || {}),
+      },
+      signal: AbortSignal.timeout(20_000),
+    });
+  } catch (e) {
+    // Network failure or timeout: no status code to judge by, but the same
+    // as any other blip on a connection that will very likely work again in
+    // a few seconds.
+    if (attempt >= 4) throw new Error(`Supabase ${opts.method || "GET"} ${path} -> ${e.message} (after ${attempt} attempts)`);
+    await sleep(500 * 2 ** (attempt - 1));
+    return sbFetch(path, opts, attempt + 1);
+  }
   if (!res.ok) {
-    throw new Error(`Supabase ${opts.method || "GET"} ${path} -> ${res.status} ${await res.text()}`);
+    const body = await res.text();
+    if (RETRYABLE_STATUS.has(res.status) && attempt < 4) {
+      await sleep(500 * 2 ** (attempt - 1));
+      return sbFetch(path, opts, attempt + 1);
+    }
+    throw new Error(`Supabase ${opts.method || "GET"} ${path} -> ${res.status} ${body} (after ${attempt} attempt${attempt > 1 ? "s" : ""})`);
   }
   if (res.status === 204) return null;
   return await res.json().catch(() => null);
@@ -734,6 +760,13 @@ while (Date.now() < deadline) {
     console.log(`sweep ${sweeps}: ${tracking} aircraft in range, ${landings} landing(s) recorded so far`);
   }
 
+  // sbFetch already retries a transient blip a few times on its own. If it
+  // still fails after that, the honest response is the same one the board
+  // refresh above already uses: skip this sweep's writes, log it, and try
+  // again next sweep rather than losing the rest of a 5.5 hour run to one
+  // bad round trip - which is exactly what used to happen here.
+  try {
+
   // Re-read just what's needed so a landing is never recorded twice.
   const cur = await sbFetch(
     `flights?select=id,touchdown_at,last_alt_ft,last_gs_kt,last_seen_at&service_date=eq.${serviceDate}`);
@@ -868,6 +901,10 @@ while (Date.now() < deadline) {
     },
     updated_at: new Date().toISOString(),
   }]);
+
+  } catch (e) {
+    console.log(`sweep ${sweeps} write failed, will retry next sweep: ${e.message}`);
+  }
 
   const left = deadline - Date.now();
   if (left > SWEEP_MS) await sleep(SWEEP_MS);
